@@ -305,4 +305,4 @@ If you use EDsim in your research, please cite:
 
 ## License
 
-This project is released under the [MIT License](LICENSE).
+This project is released under the [Apache License 2.0](LICENSE).

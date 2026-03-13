@@ -1,0 +1,103 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>分诊智能体演示台</title>
+  <link rel="stylesheet" href="/ui-assets/styles.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Triage / Feature Extraction / Safety Rules</p>
+        <h1>分诊智能体演示台</h1>
+        <p class="hero-text">把患者的一段通俗描述，拆成症状、伴随症状、风险信号和分诊结论。这个页面重点展示“原话如何被理解”。</p>
+      </div>
+      <div class="hero-badge">
+        <span class="badge-title">当前流程</span>
+        <span class="badge-flow">患者描述 → 特征提取 → 规则复核 → 分诊输出</span>
+      </div>
+    </header>
+
+    <main class="dashboard">
+      <section class="panel intake-panel">
+        <div class="panel-head">
+          <h2>首轮建会话</h2>
+          <p>先填写基本信息，再开始多轮问诊。</p>
+        </div>
+        <form id="start-form" class="stack-form">
+          <label>
+            <span>主诉</span>
+            <textarea id="chief_complaint" rows="3" placeholder="例如：孩子肚子疼、还有点发烧"></textarea>
+          </label>
+          <div class="grid-2">
+            <label>
+              <span>年龄</span>
+              <input id="age" type="number" min="0" max="120" value="8" />
+            </label>
+            <label>
+              <span>性别</span>
+              <select id="sex">
+                <option value="女">女</option>
+                <option value="男">男</option>
+                <option value="其他">其他</option>
+                <option value="未知">未知</option>
+              </select>
+            </label>
+          </div>
+          <div class="grid-2">
+            <label>
+              <span>体温</span>
+              <input id="temperature" type="number" step="0.1" placeholder="可留空" />
+            </label>
+            <label>
+              <span>疼痛评分</span>
+              <input id="pain_score" type="number" min="0" max="10" value="6" />
+            </label>
+          </div>
+          <label>
+            <span>心率</span>
+            <input id="heart_rate" type="number" min="0" value="110" />
+          </label>
+          <button class="primary-btn" type="submit">开始分诊会话</button>
+        </form>
+      </section>
+
+      <section class="panel chat-panel">
+        <div class="panel-head">
+          <h2>多轮描述</h2>
+          <p>这里模拟患者继续用口语补充描述。</p>
+        </div>
+        <div id="chat-log" class="chat-log"></div>
+        <form id="message-form" class="chat-form">
+          <textarea id="message-input" rows="3" placeholder="例如：昨天开始肚子绞着疼，今天还一直想吐，体温38.5度"></textarea>
+          <button class="primary-btn" type="submit">发送患者回复</button>
+        </form>
+      </section>
+
+      <section class="panel insights-panel">
+        <div class="panel-head">
+          <h2>提取结果</h2>
+          <p>重点观察患者原话是如何被拆成结构化 feature 的。</p>
+        </div>
+        <div class="insight-block">
+          <h3>当前分诊</h3>
+          <div id="triage-chip" class="triage-chip neutral">未开始</div>
+          <div id="triage-summary" class="summary-list"></div>
+        </div>
+        <div class="insight-block">
+          <h3>结构化更新</h3>
+          <pre id="updates-view" class="code-box">等待患者描述...</pre>
+        </div>
+        <div class="insight-block">
+          <h3>特征提取轨迹</h3>
+          <pre id="trace-view" class="code-box">等待患者描述...</pre>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/ui-assets/app.js"></script>
+</body>
+</html>

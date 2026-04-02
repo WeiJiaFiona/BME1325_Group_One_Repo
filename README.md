@@ -1,357 +1,202 @@
-# EDSim: An Agentic Simulator for Emergency Department Operations
+# ED-MAS Week 5-12 Weekly Workflow
+
+## Project Target
+Build a production-ready Emergency Department MAS subsystem that is integration-ready with ICU and ward teams via stable L1 interfaces, while keeping ED workflow deterministic, clinically grounded, and testable.
+
+## Baseline Gap and Optimization Strategy
+
+### Current baseline gaps (EDSim)
+- CTAS-first logic is not fully aligned to the China A-D triage standard.
+- Role set is limited for realistic ED operations under resource pressure.
+- Memory exists but is not optimized for handoff continuity and replay evaluation.
+- Safety and governance evidence is insufficient for final course-stage requirements.
+
+### Practical optimizations (low-risk, high-value)
+- Add China-first triage policy: `CN_AD` with `CTAS_COMPAT` mapping.
+- Add bounded coordinators: measurement dispatch, flow coordination, consult timeout handling.
+- Add memory layers: episode memory + handoff memory + experience replay retrieval.
+- Add auditable safety layer: deterministic risk block + PHI-safe logs + fallback behavior.
+
+## Interface Freeze for Cross-Subsystem Integration (L1)
+1. `POST /ed/handoff/request`
+- Input: `patient_id, acuity_ad, zone, stability, required_unit, clinical_summary, pending_tasks`
+- Output: `handoff_ticket_id, status, reason`
+
+2. `POST /ed/handoff/complete`
+- Input: `handoff_ticket_id, receiver_system, accepted_at, receiver_bed`
+- Output: `final_disposition_state, transfer_latency_seconds`
+
+3. `GET /ed/queue/snapshot`
+- Output: triage/doctor/test/boarding queues + wait/occupancy snapshot.
+
+4. Event contracts
+- `ED_PATIENT_READY_FOR_ICU`
+- `ED_PATIENT_READY_FOR_WARD`
+- `ED_GREEN_CHANNEL_TRIGGERED`
+- `ED_HANDOFF_TIMEOUT`
+
+## Week-by-Week Plan (Week 5-12)
+
+## Week 5: Rule Core + Unified State Machine
+### Target
+- Deliver A-D triage/routing/escalation in a deterministic way for both modes.
+
+### Implementation Plan
+- Add triage standards: `CN_AD`, `CTAS_COMPAT`.
+- Add escalation hooks: `green_channel`, `abnormal_vitals`, `deterioration`, `consult_required`, `icu_required`, `surgery_required`.
+- Expand shared encounter state machine with explicit ED stages.
+
+### Test Plan (clinical scenarios)
+- Chest pain + diaphoresis -> urgent path.
+- FAST-positive stroke-like presentation -> escalation path.
+- Mild sprain -> low-acuity fast-track path.
+- Vitals override: low SpO2 upgrades acuity.
+
+### Robustness Evidence
+- Deterministic output under fixed input.
+- Transition invariants and illegal transition rejection.
+
+### Milestone (verifiable)
+- Unit + integration tests pass for triage/state/user encounter.
+- Demo of 3 Chinese ED cases with traceable outputs.
+
+## Week 6: Mode-U + L1 Interface Freeze
+### Target
+- User-to-ED flow is fully demonstrable and integration-ready.
+
+### Implementation Plan
+- Finalize `/mode/user/encounter/start` and handoff APIs.
+- Add event trace output and schema validation.
+
+### Test Plan
+- Walk-in chest pain, ambulance trauma, dyspnea/fever.
+- Incomplete payload and noisy language handling.
+- Handoff request/complete mock integration.
 
-[![CI](https://github.com/denoslab/EDSim/actions/workflows/ci.yml/badge.svg)](https://github.com/denoslab/EDSim/actions/workflows/ci.yml)
-[![Docker](https://github.com/denoslab/EDSim/actions/workflows/docker.yml/badge.svg)](https://github.com/denoslab/EDSim/actions/workflows/docker.yml)
-[![Preprint](https://img.shields.io/badge/preprint-Research%20Square-blue)](https://www.researchsquare.com/article/rs-8960989/v1)
-[![DOI](https://img.shields.io/badge/DOI-10.21203%2Frs.3.rs--8960989%2Fv1-blue)](https://doi.org/10.21203/rs.3.rs-8960989/v1)
-[![npj Digital Medicine](https://img.shields.io/badge/npj%20Digital%20Medicine-under%20review-orange)](https://www.nature.com/npjdigitalmed/)
-[![Python 3.9](https://img.shields.io/badge/python-3.9-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+### Robustness Evidence
+- No crash on malformed input.
+- Contract-level compatibility with ICU/ward mock server.
 
-📖 **[Full API documentation](https://denoslab.github.io/EDSim/)**
+### Milestone
+- L1 APIs frozen and documented.
 
+## Week 7: Mode-A + Resource Realism
+### Target
+- Autonomous ED simulation with queue/resource bottlenecks.
 
-EDSim is a multi-agent simulation of emergency department (ED) workflows driven by large language model (LLM)-powered autonomous agents. Each agent — doctor, bedside nurse, triage nurse, or patient — perceives its environment, makes decisions through cognitive modules, holds natural-language conversations with other agents, and executes clinically-constrained behaviors in real time. The result is a high-fidelity testbed for ED operations research that goes beyond what traditional simulation methods can produce.
+### Implementation Plan
+- Arrival profiles (normal/surge/burst).
+- Lab/imaging capacity and turnaround timing.
+- Boarding queue and timeout events.
 
-![banner](static/banner.png)
+### Test Plan
+- Surge pressure, doctor shortage, imaging bottleneck.
 
-## Background & Motivation
+### Robustness Evidence
+- No queue deadlock/livelock.
+- Reproducible KPI output under fixed seed.
 
-Emergency departments face chronic crowding and complex patient-flow challenges that are difficult to study safely in real clinical settings. Traditional simulation approaches — discrete-event models and rule-based agent simulations — can reproduce coarse statistics like average wait times and throughput, but they cannot capture the fine-grained staff behaviors, spontaneous communication, and dynamic decision-making that ultimately shape patient outcomes.
+### Milestone
+- Stable auto-run with KPI snapshots.
 
-EDSim addresses this gap by grounding each virtual agent in an LLM-driven cognitive architecture. Agents form memories, reflect on past events, plan upcoming actions, and converse with one another — all while operating under clinically realistic constraints such as CTAS triage protocols and role-specific responsibilities. This combination enables the simulator to surface emergent workflow patterns that simpler models miss.
+## Week 8: Memory v1 (Innovation Core)
+### Target
+- Memory improves continuity and handoff quality with bounded latency.
 
-The immediate practical value is speed and safety: hospital managers and researchers can run what-if experiments — reallocating beds, adjusting staffing levels, changing triage thresholds — in minutes on commodity hardware, without disrupting real patient care.
+### Implementation Plan
+- `EpisodeMemory`, `HandoffMemory`, `ExperienceReplayBuffer`.
+- Inject retrieval only at bounded decision checkpoints.
 
-## Key Findings & Validation
+### Test Plan
+- Reassessment after delayed test result.
+- Shift change handoff continuity.
+- Recurrent similar case retrieval.
 
-EDSim has been validated against real-world ED operational data (details in the [preprint](https://www.researchsquare.com/article/rs-8960989/v1)):
+### Robustness Evidence
+- Memory ON/OFF ablation on consistency and repeated-question rate.
 
-- **Realistic wait-time distributions** — Baseline simulation results align with historical patient wait-time distributions when stratified by CTAS triage acuity level (1–5).
-- **Authentic agent behavior** — Agents generate convincing clinical conversations and exhibit plausible adaptive behaviors under novel workflow conditions not seen during prompt design.
-- **Rapid experimentation** — Operational interventions (e.g., bed reallocation, surge staffing) can be evaluated end-to-end in minutes, enabling iterative hypothesis testing.
+### Milestone
+- Quantified memory benefit report.
 
-> EDSim represents a new paradigm for healthcare operations research — combining data-driven modeling with LLM-generated behavior to produce a simulator that is both statistically grounded and behaviorally rich.
+## Week 9: Safety/Ethics + Recovery
+### Target
+- Risk control is testable and auditable.
 
-## Table of Contents
+### Implementation Plan
+- High-risk advice block rules.
+- PHI redaction and audit trail.
+- Fallback-to-rule mode during model/tool timeout.
 
-1. [Background & Motivation](#background--motivation)
-2. [Key Findings & Validation](#key-findings--validation)
-3. [Quickstart](#quickstart)
-4. [Architecture Overview](#architecture-overview)
-5. [Agent Roles](#agent-roles)
-6. [Installation](#installation)
-7. [Running the Simulation](#running-the-simulation)
-8. [Configuration](#configuration)
-9. [Data Collection](#data-collection)
-10. [Testing](#testing)
-11. [CI/CD](#cicd)
-12. [Acknowledgments](#acknowledgments)
-13. [Citation](#citation)
-14. [License](#license)
+### Test Plan
+- Dangerous dosage suggestion injection.
+- Sensitive info leakage attempt.
+- Timeout during active encounter.
 
-## Quickstart
+### Robustness Evidence
+- Safe degradation without workflow collapse.
 
-Get EDSim running in three steps using Docker (no conda or Python setup required):
+### Milestone
+- Safety test suite and audit logs pass review.
 
-```bash
-# 1. Clone the repository
-git clone <repo-url> EDSim && cd EDSim
+## Week 10: China Localization Deepening
+### Target
+- Chinese ED realism beyond translation.
 
-# 2. Add your API credentials
-cp .env.example .env   # then edit .env with your OPENAI_KEY, OPENAI_MODEL, etc.
+### Implementation Plan
+- Replace English-only salience/prompt assumptions.
+- A-D report stratification and localized pathway text.
+- Green-channel localized triggers (chest pain/stroke/trauma).
 
-# 3. Start the simulation
-docker compose up --build
-```
+### Test Plan
+- Chinese colloquial complaints and mixed-language input.
+- Elderly/comorbidity atypical cases.
 
-Open [http://localhost:8000/](http://localhost:8000/) to confirm the frontend is running. The backend runs headlessly and writes simulation state to a shared volume.
+### Robustness Evidence
+- Routing stability under language variation.
 
-> For interactive mode, custom configuration, or local development, see the sections below.
+### Milestone
+- Localized scenario replay package.
 
-## Architecture Overview
+## Week 11: Policy Optimization Experiments
+### Target
+- Demonstrate measurable operational gains.
 
-EDSim consists of three main components:
+### Implementation Plan
+- Policy toggles: queue aging, memory on/off, surge control variants.
+- Experiment runner for paired comparison.
 
-### Backend Simulation Engine (`reverie/`)
+### Test Plan
+- Same arrival stream and seed across strategies.
+- Compare wait, LOS, boarding delay, handoff latency.
 
-The core engine that drives agent behavior. Each agent is equipped with cognitive modules that form the simulation's cognitive loop:
+### Robustness Evidence
+- Variance and confidence summary across multiple runs.
 
-- **Plan** — generates and revises daily and immediate action plans
-- **Perceive** — observes nearby agents, objects, and events in the ED environment
-- **Reflect** — synthesizes observations into higher-level insights stored in memory
-- **Converse** — initiates and participates in natural-language conversations with other agents
-- **Execute** — translates planned actions into simulation state changes (movement, tests, discharge)
+### Milestone
+- Optimization dashboard and conclusions.
 
-Agent personas, memory streams, and spatial awareness are managed within the `persona/` sub-package.
+## Week 12: Freeze + Defense Package
+### Target
+- Deliver a defense-ready ED subsystem and reproducible demo.
 
-### Frontend Visualization Server (`environment/`)
+### Implementation Plan
+- Freeze contracts and perform cross-team drill.
+- Prepare final report, runbook, and demo script.
 
-A Django-based web application that renders the ED floor plan and provides a browser-based interface for replaying and inspecting simulation runs. Agents and patients are visualized on a tile-based map that reflects the physical layout of the ED.
+### Test Plan
+- End-to-end critical case path to ICU handoff.
+- Long-run stability check.
+- Fault injection and restart recovery.
 
-### Analysis Pipeline (`analysis/`)
+### Robustness Evidence
+- Full chain green checks and no interface breaks.
 
-Post-simulation scripts that compute operational metrics from the simulation output, including patient throughput, time-in-state distributions, and CTAS-stratified performance summaries.
+### Milestone
+- One-click demo package accepted for final defense.
 
-## Agent Roles
-
-- **Doctor** — Assesses patients, orders diagnostic tests, and discharges patients. Spawns in the major injuries zone.
-- **Bedside Nurse** — Transfers patients between rooms and performs tests. Spawns in the minor injuries zone.
-- **Triage Nurse** — Assigns a CTAS score and injury zone to incoming patients. Spawns in the triage zone.
-- **Patient** — Arrives with symptoms, interacts with staff, and follows the simulation flow. Spawns at the ED entrance.
-
-## Installation
-
-### Prerequisites
-
-- [Docker](https://docs.docker.com/get-docker/) — for the recommended containerized setup
-- **or** [Conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html) — for local development
-
-### Local (Conda) Setup
-
-```bash
-git clone <repo-url> EDSim
-cd EDSim
-conda create --name simulacra python=3.9.12
-conda activate simulacra
-pip install -r requirements.txt
-```
-
-### API Credentials
-
-EDSim supports two credential methods; the first one found is used.
-
-**Method 1 — `.env` file (for Docker or any environment):**
-
-```bash
-cp .env.example .env
-# Edit .env and fill in OPENAI_KEY, OPENAI_MODEL, EMBEDDINGS_KEY, etc.
-```
-
-**Method 2 — `openai_config.json` (for local/conda runs):**
-
-Create `openai_config.json` in the repository root (gitignored). Supports both OpenAI and Azure OpenAI:
-
-**OpenAI:**
-
-```json
-{
-  "client": "openai",
-  "model": "gpt-3.5-turbo",
-  "model-key": "sk-...",
-  "embeddings-client": "openai",
-  "embeddings-model": "text-embedding-ada-002",
-  "embeddings-key": "sk-..."
-}
-```
-
-**Azure OpenAI:**
-
-```json
-{
-  "client": "azure",
-  "model": "gpt-35-turbo-0125",
-  "model-key": "your-azure-key",
-  "model-endpoint": "https://your-resource.openai.azure.com/",
-  "model-api-version": "2024-02-01",
-  "embeddings-client": "azure",
-  "embeddings-model": "text-embedding-ada-002",
-  "embeddings-key": "your-azure-embeddings-key",
-  "embeddings-endpoint": "https://your-resource.openai.azure.com/",
-  "embeddings-api-version": "2024-02-01"
-}
-```
-
-## Running the Simulation
-
-### Interactive Mode (Frontend + Backend)
-
-This mode lets you watch the simulation in real time through a browser-based visualization. Requires the local conda setup.
-
-**Terminal 1 — Frontend:**
-
-```bash
-cd environment/frontend_server
-python manage.py runserver 8000
-```
-
-Open [http://localhost:8000/](http://localhost:8000/) in your browser.
-
-**Terminal 2 — Backend:**
-
-```bash
-conda activate simulacra
-cd reverie/backend_server
-python reverie.py
-```
-
-At the interactive prompt: type `run <steps>` to advance (e.g., `run 1000`), and `fin` to save and exit. The virtual map is at [http://localhost:8000/simulator_home](http://localhost:8000/simulator_home).
-
-**`reverie.py` arguments:**
-
-| Argument           | Description                                                              | Default           |
-| ------------------ | ------------------------------------------------------------------------ | ----------------- |
-| `--origin`         | Source folder from which the simulation is initialized.                  | `ed_sim_n5`       |
-| `--target`         | Folder where the simulation output is saved.                             | `test-simulation` |
-| `--browser`        | Automatically open a Firefox browser tab (`yes` or `no`).               | `yes`             |
-| `--headless`       | Run in headless mode, skipping frontend file I/O for faster runs (`yes` or `no`). | `no`     |
-| `--write_movement` | Write `movement/{step}.json` each step for replay (`yes` or `no`).      | `yes`             |
-
-### Batch / Headless Mode (`run_simulation.py`)
-
-For long unattended runs (e.g., 48 simulated hours). No frontend server is needed.
-
-```bash
-# Prepare the seed
-cp -r environment/frontend_server/storage/ed_sim_n5 environment/frontend_server/storage/curr_sim
-
-conda activate simulacra
-cd reverie/backend_server
-python run_simulation.py
-```
-
-The script runs in chunks, saves progress after each chunk, and retries failed chunks with exponential backoff (1 min → 2 min → 5 min). Errors are logged to `error_log_run_simulation_safe-mode.txt`.
-
-**Configurable variables (top of `run_simulation.py`):**
-
-| Variable          | Description                                                                 | Default |
-| ----------------- | --------------------------------------------------------------------------- | ------- |
-| `hours_to_run`    | Simulated hours to run.                                                     | `48`    |
-| `steps_per_save`  | Steps per chunk before saving.                                              | `1000`  |
-| `write_movement`  | Write movement files each step. Disable for faster runs.                    | `True`  |
-
-### Troubleshooting
-
-- **OpenAI library version** — `pip install --upgrade openai`
-- **`cost_logger.py` JSON error** — In `openai_cost_logger.py` (site-packages), change the time format from `xx:xx:xx` to `xx-xx-xx`.
-
-## Configuration
-
-### meta.json
-
-Adjust simulation parameters by editing `<origin_folder>/reverie/meta.json`:
-
-| Key                                         | Description                                                                      |
-| ------------------------------------------- | -------------------------------------------------------------------------------- |
-| `start_date`                                | Date the simulation starts.                                                      |
-| `curr_time`                                 | Start datetime of the simulation.                                                |
-| `sec_per_step`                              | Seconds of simulation time per step.                                             |
-| `maze_name`                                 | Name of the map layout used.                                                     |
-| `persona_names`                             | List of personas available at simulation start.                                  |
-| `{role}_starting_amount`                    | Number of agents of a given role at start (e.g., `doctor_starting_amount`).      |
-| `patient_rate_modifier`                     | Adjusts patient arrival rate (e.g., `0.5` = half the default rate).              |
-| `priority_factor`                           | Factor for prioritizing patients by CTAS score.                                  |
-| `testing_time`                              | Duration of diagnostic tests (minutes).                                          |
-| `testing_result_time`                       | Time for diagnostic results to return (minutes).                                 |
-| `patient_walkout_probability`               | Probability (0–1) that a waiting patient leaves the ED.                          |
-| `patient_walkout_check_minutes`             | Minutes between walk-out evaluations for a patient in the same state.            |
-| `patient_post_discharge_linger_probability` | Probability (0–1) that a discharged patient remains in their bed space.          |
-| `patient_post_discharge_linger_minutes`     | Minutes a lingering patient stays before heading to the exit (0 = indefinitely). |
-
-Walk-out and post-discharge lingering events are logged per patient in `data_collection.json` under `left_department_by_choice` and `lingered_after_discharge`.
-
-### maze_status.json
-
-| Field               | Description                                                           |
-| ------------------- | --------------------------------------------------------------------- |
-| `change_bed_amount` | Areas that will have their bed counts changed in the next simulation. |
-| `remove_beds`       | Number of beds to remove from the injuries area.                      |
-
-### Adjusting the Map Layout
-
-Use the [Tiled](https://www.mapeditor.org/) map editor:
-
-1. Open the existing map file from `static_dirs/assets/visuals`.
-2. Edit the layout, keeping tile conventions for spawn locations, sectors, arenas, and object interaction layers.
-3. Save to `static_dirs/assets/visuals`.
-4. Update `maze_name` in `meta.json` to match the new filename.
-
-## Data Collection
-
-### Patient Fields
-
-| Field                         | Description                                                                       |
-| ----------------------------- | --------------------------------------------------------------------------------- |
-| `ICD-10-CA_code`              | Diagnosis assigned at patient creation.                                           |
-| `CTAS_score`                  | Score assigned by the Triage Nurse (0 = unassigned).                              |
-| `Injuries_zone`               | Zone assigned by the Triage Nurse.                                                |
-| `Time_spent_state`            | Time spent in each state (minutes).                                               |
-| `Time_spent_area`             | Time spent in each area (minutes).                                                |
-| `Exempt_from_data_collection` | Whether the patient is excluded from final data (e.g., added via unseen actions). |
-
-### Summarized by CTAS Score
-
-| Field                                                     | Description                                          |
-| --------------------------------------------------------- | ---------------------------------------------------- |
-| `Num_of_patients`                                         | Total patients with this score.                      |
-| `Percentage_of_total`                                     | Percentage of all patients with this score.          |
-| `Total`                                                   | Total time spent (all patients) in states and areas. |
-| `Normalized`                                              | Average time per patient in states and areas.        |
-| `Standard Deviation`                                      | Standard deviation for time in states and areas.     |
-| `Minor injuries zone / Major injuries zone / Trauma room` | Counts of patients in each zone or room.             |
-
-Patient times and CTAS scores are also exported as CSV files by the analysis pipeline.
-
-## Testing
-
-The project ships with a pytest-based unit test suite covering the backend simulation utilities, analysis pipeline, and Django frontend views.
-
-**Local (conda):**
-
-```bash
-# Backend + analysis
-python -m pytest tests/backend/ tests/analysis/ -v -p no:django
-
-# Frontend (Django views)
-python -m pytest tests/frontend/ -v
-```
-
-**Inside the Docker container:**
-
-```bash
-docker compose run --rm backend python -m pytest /app/tests/backend/ /app/tests/analysis/ -v -p no:django
-```
-
-## CI/CD
-
-Every pull request and push to `main` triggers the GitHub Actions CI pipeline. Docker images are published to the GitHub Container Registry on merge.
-
-| Workflow | Trigger | What it does |
-|---|---|---|
-| **CI** | PR / push to `main` | Runs backend, analysis, and frontend tests |
-| **Docker** | Push to `main` | Builds and pushes images to GHCR |
-| **Release** | Push a `v*` tag | Creates a GitHub Release with auto-generated notes |
-
-To cut a release:
-
-```bash
-git tag v1.0.0 && git push origin v1.0.0
-```
-
-## Acknowledgments
-
-We thank the clinical staff and operational teams who contributed domain expertise to the design of EDSim's agent behaviors and workflows.
-
-## Citation
-
-If you use EDSim in your research, please cite:
-
-```bibtex
-@misc{wu2026edsim,
-  title     = {EDSim: An Agentic Simulator for Emergency Department Operations},
-  author    = {Wu, Jiajun and Ledingham, Hutton and Wang, Zirui and Teitge, Braden
-               and Burn, Alexander and Ouadihi, Oussama and Ghattas, Mohamad
-               and Vicaldo, Darin and Cociuba, Sergiu and Harmon, Megan
-               and Chowdhury, Tanvir and Marshall, Zack and Williamson, Tyler
-               and Risling, Tracie and Lang, Eddy and Zhou, Jiayu
-               and Holodinsky, Jessalyn and Drew, Steve},
-  year      = {2026},
-  doi       = {10.21203/rs.3.rs-8960989/v1},
-  note      = {Preprint, under review at \textit{npj Digital Medicine}},
-  publisher = {Research Square}
-}
-```
-
-## License
-
-This project is released under the [Apache License 2.0](LICENSE).
+## Weekly DoD Checklist
+- A runnable demo flow (5-10 min).
+- Test commands + pass/fail summary.
+- KPI snapshot (`avg_wait`, `LOS`, `boarding_delay`, `handoff_latency`, `safety_block_rate`).
+- Risk log + rollback notes.
+- Next-week dependency and interface notes.

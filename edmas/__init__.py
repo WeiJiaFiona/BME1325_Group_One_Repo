@@ -1,1 +1,0 @@
-"""EDMAS package root."""

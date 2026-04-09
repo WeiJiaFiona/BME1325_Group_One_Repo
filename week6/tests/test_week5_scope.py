@@ -10,8 +10,10 @@ def test_chest_pain_diaphoresis():
         "vitals": {"spo2": 95, "sbp": 120},
     }
     result = start(payload)
-    assert result["triage"]["acuity_ad"] == "A"
-    assert result["triage"]["ctas_compat"] == 1
+    assert result["triage"]["acuity_ad"] == "B"
+    assert result["triage"]["ctas_compat"] == 2
+    assert result["triage"]["green_channel"] is True
+    assert result["triage"]["level_1_4"] == 2
     assert "green_channel" in result["triage"]["hooks"]
 
 
@@ -23,7 +25,8 @@ def test_fast_positive_stroke():
         "vitals": {"spo2": 96, "sbp": 140},
     }
     result = start(payload)
-    assert result["triage"]["acuity_ad"] == "A"
+    assert result["triage"]["acuity_ad"] == "B"
+    assert result["triage"]["green_channel"] is True
     assert result["final_state"] == "UNDER_EVALUATION"
 
 
@@ -37,6 +40,19 @@ def test_mild_sprain_low_acuity():
     result = start(payload)
     assert result["triage"]["acuity_ad"] == "D"
     assert result["final_state"] == "WAITING_FOR_PHYSICIAN"
+
+
+def test_yellow_zone_wait_cap_hook():
+    payload = {
+        "patient_id": "p3b",
+        "chief_complaint": "abdominal pain",
+        "symptoms": ["needs blood test", "needs CT"],
+        "vitals": {"spo2": 98, "sbp": 122},
+    }
+    result = start(payload)
+    assert result["triage"]["zone"] == "yellow"
+    assert result["triage"]["max_wait_minutes"] == 30
+    assert "wait_cap_30m" in result["triage"]["hooks"]
 
 
 def test_low_spo2_override():

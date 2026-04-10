@@ -53,6 +53,12 @@
   - `POST /handoff/complete`
 - 供测试使用，确保与 “mock server” 描述一致。
 
+### 2.5 merged_v1 交接补充（当前进度）
+- 交接文档：`week6/merged_v1_illstration.md`
+- User Mode 前端：已新增独立 `/mode/user` 页面与左右栏 UI（聊天区 + 状态卡片）
+- API 自检：已在本地用 Python 直调 `/mode/user/*` 与 `/ed/*` 通过
+- Auto Mode：仍因缺少 `storage/ed_sim_n5/reverie/meta.json` 无法启动
+
 ---
 
 ## 3. 目录结构（本周相关）

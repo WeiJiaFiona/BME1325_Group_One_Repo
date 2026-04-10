@@ -1,123 +1,85 @@
-# Week6 README
+# Week6 进度说明
 
-本文件用于周内交接与协作，概述 Week6 已完成的工作、接口冻结范围、测试重点，以及常用 PowerShell 指令。
-
----
-
-## 1. 本周目标（Week6 User Mode + L1 API Freeze）
-- 冻结 4 个 L1 接口的输入/输出契约（schema）、错误码与事件追踪结构。
-- 完成 handoff 状态机与本地 mock server 以支持契约验证。
-- 建立 contract / malformed / state / integration / scenario 测试闭环。
+基于当前代码与 Week5–12 工作流整理，包含“上周完成”“本周进度（后端/前端）”“下周计划”三部分。
 
 ---
 
-## 2. 已完成内容（可对外同步）
+## 1. 上周完成的进度说明（Week5 核心逻辑）
 
-### 2.1 L1 接口冻结
-- `/mode/user/encounter/start`
-  - 最小字段集，必填 `chief_complaint` + `vitals.spo2` + `vitals.sbp`。
-  - 响应包含 `patient_id / triage / final_state / state_trace / event_trace`。
-  - event_trace 为全量轨迹。
+上周重点完成了**分诊模块与规则状态机**：
 
-- `/ed/handoff/request`
-  - 固定字段：`patient_id, acuity_ad, zone, stability, required_unit, clinical_summary, pending_tasks`。
-  - 响应：`handoff_ticket_id, status, reason, event_trace`。
-  - event_trace 仅 `handoff_requested`。
+**分诊与状态机（规则层）**
+- `week5_system/rule_core/triage_policy.py`  
+  完成 CN_AD 分诊规则，输出 `acuity_ad / level_1_4 / ctas_compat / zone / hooks / max_wait_minutes` 等字段；支持异常生命体征与绿色通道等 hooks。
+- `week5_system/rule_core/state_machine.py`  
+  完成 Encounter 规则状态机（合法状态转移 + escalation hooks），保证状态跳转可控且可复现。
+- `week5_system/rule_core/encounter.py`  
+  作为规则入口，将 triage 与状态机串联，生成 `state_trace` 与 `final_state`。
 
-- `/ed/handoff/complete`
-  - 固定字段：`handoff_ticket_id, receiver_system, accepted_at, receiver_bed`。
-  - 响应：`final_disposition_state, transfer_latency_seconds, event_trace`。
-  - event_trace 仅 `handoff_completed`。
+**User encounter 入口**
+- `week5_system/app/mode_user.py`  
+  提供严格 schema 校验（`schema.py`），完成 `start()` 流程：校验 → triage → 状态机 → event_trace，输出 `triage / state_trace / final_state`。
 
-- `/ed/queue/snapshot`
-  - 固定统计结构：`queues + occupancy + snapshot_time + trace_id`。
-  - 不强制返回 event_trace，避免过度工程化。
-
-### 2.2 统一错误响应
-- 结构：`{error_code, message, field_errors}`。
-- 固定 error_code：
-  - `INVALID_SCHEMA`
-  - `MISSING_FIELD`
-  - `INVALID_TYPE`
-  - `NOT_FOUND`
-  - `INVALID_STATE`
-
-### 2.3 Handoff 状态机
-- 状态：`INIT -> REQUESTED -> COMPLETED / REJECTED / TIMEOUT`
-- 超时规则：`accepted_at - requested_at > 1800s`。
-- 非法转移返回 `INVALID_STATE`。
-
-### 2.4 ICU/Ward Mock Server（HTTP）
-- 本地 mock server，端点：
-  - `POST /handoff/request`
-  - `POST /handoff/complete`
-- 供测试使用，确保与 “mock server” 描述一致。
+这些规则模块形成 Week6 的**可复用“确定性规则核心”**，保证分诊与状态机逻辑稳定。
 
 ---
 
-## 3. 目录结构（本周相关）
-```
-week6/
-  week5_system/
-    app/                 # L1 接口逻辑层与 schema
-    queue_state_primitives/  # queue snapshot
-    rule_core/           # Week5 规则核心复用
-  tests/                 # Week6 新增测试
-  week6_workflow.md      # 冻结版方案文档
-```
+## 2. 本周进度：Week6 UI + L1 API
+
+### 2.1 后端说明（基于 Week 6 任务要求与代码实现）
+
+Week6 要求“完成 user‑to‑ED encounter 路径 + 冻结 L1 API”。
+
+  说明：让真实用户，作为患者进入系统，从输入主诉开始一路走完整个急诊流程。
+
+当前后端实现落在：
+
+- `week5_system/app/api_v1.py`  
+  完成 L1 API 的**内存态运行时**，记录会话、encounter、handoff ticket：  
+  `start_encounter / chat_turn / session_status / session_reset / handoff / queue_snapshot（用于统计 encounter/queue的结果并返回前端）`。  
+  User Mode 主逻辑在 `user_mode_chat_turn()`，以 `phase` 驱动流程并调用规则层；已完成本地 API 自检（Python 直调 `/mode/user/*` 与 `/ed/*`）。
+
+- `week5_system/app/handoff.py`  
+  独立 handoff 周期（REQUESTED/COMPLETED/REJECTED/TIMEOUT）作为状态流，并支持 mock server，能做 API contract test 和集成测试。
+
+- `week5_system/app/response_generator.py`  
+  引入响应生成层（intent → 文本），用于缓和“规则式”对话；当前为模板式实现。
+
+### 2.2 前端说明（User Mode UI 进度）
+
+- **独立 User Mode 页面**  
+  `week6_interface/frontend_server/templates/home/user_mode.html`  
+  左侧状态卡片 + 右侧聊天区。
+
+- **前端逻辑与 API 调用**  
+  `week6_interface/frontend_server/static_dirs/js/user_mode.js`  
+  已接入 `/mode/user/session/status`、`/mode/user/chat/turn`、`/mode/user/session/reset`、`/ed/queue/snapshot`。  
+  前端只做渲染与交互，不依赖 reverie movement loop（User Mode 是独立页面）。
+
+- **样式与布局**  
+  `week6_interface/frontend_server/static_dirs/css/user_mode.css`  
+  完成两栏布局、聊天角色颜色区分。
+
+---
+## 3. 下周目标（Week7：Auto Mode + Resource Realism）
+
+在完成 Week6 最小闭环的基础上，Week7 的重点将从“能跑通”升级为“更真实、更自然、更接近真实医疗场景”的系统迭代：
+
+### 1. 前端体验优化：让系统“像一个真实世界”
+- 优化人物在场景中的移动逻辑（路径、节奏、状态切换）
+- 丰富角色画像（医生 / 护士 / 患者），增强行为与身份的一致性
+- 提升整体可视化表现，使流程不仅“正确”，还“直观可理解”
+
+目标：从“流程模拟器”升级为“可感知的动态场景”
 
 ---
 
-## 4. 常用 PowerShell 指令
+### 2. 对话系统优化：在规则驱动与自然表达之间找到平衡
+当前系统的对话仍偏向“流程式反馈”（较强规则感），下一步重点是：
 
-### 进入 Week6 并运行测试
-```powershell
-cd D:\projects\BME1325Spring2026\BME1325_Group_One_Repo\week6
-python -m pytest -q
-```
+- 在保证关键字段采集（如 SpO₂ / SBP 等）的前提下  
+- 减少机械重复与模板化表达  
+- 引入更自然、贴近真实医护沟通风格的语言生成  
 
-### 指定 mock server（环境变量）
-```powershell
-$env:HANDOFF_MOCK_URL = "http://127.0.0.1:8001/handoff/request"
-```
+**从“系统在执行流程” → “像真人在进行沟通”**
 
----
-
-## 5. 测试重点（What we validate）
-
-### Contract Tests
-- 4 个接口输入最小字段集能通过
-- 响应字段完整且稳定
-
-### Malformed Payload Tests
-- 缺字段 -> `MISSING_FIELD`
-- 类型错误 -> `INVALID_TYPE`
-- payload 非对象 -> `INVALID_SCHEMA`
-
-### State Tests
-- handoff_ticket_id 不存在 -> `NOT_FOUND`
-- 非法状态转移 -> `INVALID_STATE`
-
-### Integration Tests
-- mock server request -> complete 全链路
-- timeout case（accepted_at 超阈值）
-- queue snapshot 返回结构 + trace_id
-
-### Scenario Tests
-- walk-in chest pain
-- ambulance trauma
-- dyspnea / fever
-
----
-
-## 6. 说明与注意事项
-- 本周接口冻结为“函数级入口”，未绑定真实 HTTP 路由。
-- 如果需要前端/外部直接访问，需要在上层 FastAPI 中增加路由绑定。
-- 所有时间单位统一为 seconds。
-- `receiver_bed` 为空代表拒绝，非空代表成功。
-
----
-
-## 7. 参考文档
-- `week6/week6_workflow.md`
-- `week5/edmas/EDMAS_week5_12_workflow.md`

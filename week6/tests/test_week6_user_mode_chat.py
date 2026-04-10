@@ -19,7 +19,7 @@ def test_user_mode_intake_followup_then_encounter_start():
     assert second["session"]["phase"] == "WAITING_CALL"
     assert second["session"]["encounter_id"]
     assert second["messages"]
-    assert "Triage completed" in second["messages"][0]["text"]
+    assert second["messages"][0]["role"] == "triage_nurse"
 
 
 def test_user_mode_called_then_doctor_then_bed_nurse_flow():

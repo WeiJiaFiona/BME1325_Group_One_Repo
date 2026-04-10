@@ -1,0 +1,164 @@
+{
+  "triage_patients": 1,
+  "injuries_zones": {
+    "change_bed_amount": [
+      "major injuries zone",
+      "minor injuries zone"
+    ],
+    "assessment_queue": [],
+    "bedside_nurse_waiting": [
+      [
+        9,
+        "Patient 1"
+      ],
+      [
+        9,
+        "Patient 2"
+      ]
+    ],
+    "pager": [],
+    "major injuries zone": {
+      "remove_beds": 0,
+      "current_patients": [
+        "Patient 3",
+        "Patient 5",
+        "Patient 7",
+        "Patient 10",
+        "Patient 11"
+      ],
+      "bed_assignments": {
+        "Patient 3": [
+          27,
+          2
+        ],
+        "Patient 5": [
+          11,
+          2
+        ],
+        "Patient 7": [
+          23,
+          2
+        ],
+        "Patient 10": [
+          19,
+          2
+        ],
+        "Patient 11": [
+          15,
+          2
+        ]
+      },
+      "capacity": 5,
+      "available_beds": []
+    },
+    "minor injuries zone": {
+      "remove_beds": 0,
+      "current_patients": [
+        "Patient 6",
+        "Patient 8",
+        "Patient 9",
+        "Patient 12",
+        "Patient 13"
+      ],
+      "bed_assignments": {
+        "Patient 6": [
+          27,
+          15
+        ],
+        "Patient 8": [
+          27,
+          11
+        ],
+        "Patient 9": [
+          27,
+          17
+        ],
+        "Patient 12": [
+          27,
+          13
+        ],
+        "Patient 13": [
+          27,
+          9
+        ]
+      },
+      "capacity": 5,
+      "available_beds": []
+    },
+    "trauma room": {
+      "remove_beds": 0,
+      "current_patients": [
+        "Patient 4"
+      ],
+      "bed_assignments": {
+        "Patient 4": [
+          16,
+          14
+        ]
+      },
+      "capacity": 1,
+      "available_beds": []
+    },
+    "diagnostic room": {
+      "remove_beds": 0,
+      "current_patients": [],
+      "bed_assignments": {},
+      "capacity": 2
+    }
+  },
+  "triage_queue": [
+    "Patient 15",
+    "Patient 16",
+    "Patient 17",
+    "Patient 18",
+    "Patient 19",
+    "Patient 20",
+    "Patient 21",
+    "Patient 22",
+    "Patient 23",
+    "Patient 24",
+    "Patient 25",
+    "Patient 26",
+    "Patient 27",
+    "Patient 28",
+    "Patient 29",
+    "Patient 30",
+    "Patient 31",
+    "Patient 32"
+  ],
+  "patients_waiting_for_doctor": [
+    [
+      3,
+      "Patient 1"
+    ],
+    [
+      4,
+      "Patient 10"
+    ],
+    [
+      5,
+      "Patient 2"
+    ],
+    [
+      7,
+      "Patient 11"
+    ],
+    [
+      7,
+      "Patient 8"
+    ],
+    [
+      9,
+      "Patient 12"
+    ],
+    [
+      10,
+      "Patient 9"
+    ],
+    [
+      12,
+      "Patient 13"
+    ]
+  ],
+  "doctors_taking_more_patients": []
+}

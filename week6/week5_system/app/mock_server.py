@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from typing import Dict, Tuple
@@ -37,7 +37,7 @@ class MockHandoffHandler(BaseHTTPRequestHandler):
             response = {
                 "accepted": accepted,
                 "receiver_system": required_unit,
-                "accepted_at": datetime.utcnow().isoformat() + "Z",
+                "accepted_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "receiver_bed": "BED-1" if accepted else "",
             }
             self._send_json(200, response)
@@ -45,7 +45,7 @@ class MockHandoffHandler(BaseHTTPRequestHandler):
 
         response = {
             "status": "ok",
-            "accepted_at": datetime.utcnow().isoformat() + "Z",
+            "accepted_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
         self._send_json(200, response)
 

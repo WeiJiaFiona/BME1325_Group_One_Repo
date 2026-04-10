@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
 from week5_system.rule_core.encounter import start_user_encounter
@@ -8,27 +8,34 @@ from week5_system.rule_core.triage_policy import TriageInput
 from week5_system.app.schema import PayloadError, error_response, validate_encounter_start_payload
 
 
-def _iso_now() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+_TRACE_BASE_TS = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def _iso_by_offset(offset_seconds: int) -> str:
+    return (_TRACE_BASE_TS + timedelta(seconds=offset_seconds)).isoformat().replace("+00:00", "Z")
 
 
 def _build_event_trace(triage: Dict[str, object], state_trace: List[str]) -> List[Dict[str, object]]:
     events: List[Dict[str, object]] = []
+    offset = 0
     events.append(
         {
-            "ts": _iso_now(),
+            "ts": _iso_by_offset(offset),
             "event": "triage_completed",
             "details": {"acuity_ad": triage.get("acuity_ad"), "zone": triage.get("zone")},
         }
     )
+    offset += 1
     for hook in triage.get("hooks", []) or []:
         events.append(
-            {"ts": _iso_now(), "event": "hook_applied", "details": {"hook": hook}}
+            {"ts": _iso_by_offset(offset), "event": "hook_applied", "details": {"hook": hook}}
         )
+        offset += 1
     for state in state_trace[1:]:
-        events.append({"ts": _iso_now(), "event": "state_transition", "state": state})
+        events.append({"ts": _iso_by_offset(offset), "event": "state_transition", "state": state})
+        offset += 1
     events.append(
-        {"ts": _iso_now(), "event": "encounter_completed", "state": state_trace[-1]}
+        {"ts": _iso_by_offset(offset), "event": "encounter_completed", "state": state_trace[-1]}
     )
     return events
 

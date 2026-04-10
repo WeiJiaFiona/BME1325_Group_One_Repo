@@ -1,0 +1,115 @@
+{
+  "persona": {
+    "Doctor 1": {
+      "movement": [
+        27,
+        8
+      ],
+      "pronunciatio": "\u23f3",
+      "description": "conversing about Dr. 1 checking in with Patient 3 about ongoing chest tightness and shortness of breath that is the same or slightly worse, with new sweating and nausea but no pain radiating to the arm, jaw, or back @ <waiting> 27 8",
+      "chat": null
+    },
+    "Triage Nurse 1": {
+      "movement": [
+        12,
+        13
+      ],
+      "pronunciatio": null,
+      "description": "None @ ed map:emergency department:triage room:computer",
+      "chat": null
+    },
+    "Bedside Nurse 1": {
+      "movement": [
+        13,
+        2
+      ],
+      "pronunciatio": "\u2601\ufe0f",
+      "description": "Monitoring Patient 9 @ Patient 9",
+      "chat": null
+    },
+    "Patient 1": {
+      "movement": [
+        1,
+        10
+      ],
+      "pronunciatio": "\u231b",
+      "description": "None @ ed map:emergency department:waiting room:waiting room chair",
+      "chat": null
+    },
+    "Patient 2": {
+      "movement": [
+        3,
+        9
+      ],
+      "pronunciatio": "\u231b",
+      "description": "None @ ed map:emergency department:waiting room:waiting room chair",
+      "chat": null
+    },
+    "Patient 3": {
+      "movement": [
+        27,
+        15
+      ],
+      "pronunciatio": "\ud83e\udd22",
+      "description": "conversing about Dr. 1 checking in with Patient 3 about ongoing chest tightness and shortness of breath that is the same or slightly worse, with new sweating and nausea but no pain radiating to the arm, jaw, or back @ ed map:emergency department:minor injuries zone:bed",
+      "chat": null
+    },
+    "Patient 5": {
+      "movement": [
+        27,
+        17
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (27, 17)",
+      "chat": null
+    },
+    "Patient 6": {
+      "movement": [
+        27,
+        13
+      ],
+      "pronunciatio": "\u231b",
+      "description": "conversing about Dr. 1 asking Patient 6 about their ED visit for sudden shortness of breath since this morning with chest tightness, gasping, 6/10 chest pain, and lightheadedness @ (27, 13)",
+      "chat": null
+    },
+    "Patient 7": {
+      "movement": [
+        27,
+        9
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (27, 9)",
+      "chat": null
+    },
+    "Patient 9": {
+      "movement": [
+        11,
+        2
+      ],
+      "pronunciatio": "\u231b",
+      "description": "conversing about Dr. 1 asking Patient 9 about their emergency symptoms, with Patient 9 reporting sudden shortness of breath since this morning with chest tightness and gasping, chest pain rated 6/10, and current lightheadedness @ (11, 2)",
+      "chat": null
+    },
+    "Patient 10": {
+      "movement": [
+        23,
+        2
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (23, 2)",
+      "chat": null
+    },
+    "Patient 12": {
+      "movement": [
+        15,
+        2
+      ],
+      "pronunciatio": "\u231b",
+      "description": "conversing about Dr. 1 asking Patient 12 about their emergency symptoms and onset, and Patient 12 reporting since this morning shortness of breath with chest tightness and gasping, 6/10 chest pain, and lightheadedness @ (15, 2)",
+      "chat": null
+    }
+  },
+  "meta": {
+    "curr_time": "January 01, 2024, 08:19:00"
+  }
+}

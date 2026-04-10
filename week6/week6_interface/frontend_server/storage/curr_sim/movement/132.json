@@ -1,0 +1,133 @@
+{
+  "persona": {
+    "Doctor 1": {
+      "movement": [
+        27,
+        8
+      ],
+      "pronunciatio": "\ud83d\udcac",
+      "description": "Waiting to interact with Patient 3.",
+      "chat": [
+        [
+          "Doctor 1",
+          "Thanks\u2014so this started this morning and it\u2019s a sharp, one-sided pain about 6/10 that\u2019s tender to touch and worse with deep breaths or movement. Any shortness of breath, cough, fever, leg swelling, or have you had any recent injury, heavy lifting, or long travel?"
+        ],
+        [
+          "Patient 3",
+          "I\u2019m not really short of breath, it just hurts more when I take a deep breath, and I haven\u2019t had a cough or fever. No leg swelling and no long trips lately\u2014though I did help a friend move some boxes yesterday, so maybe I pulled something? I didn\u2019t have any accident or get hit in the chest."
+        ]
+      ]
+    },
+    "Triage Nurse 1": {
+      "movement": [
+        12,
+        13
+      ],
+      "pronunciatio": null,
+      "description": "None @ ed map:emergency department:triage room:computer",
+      "chat": null
+    },
+    "Bedside Nurse 1": {
+      "movement": [
+        11,
+        2
+      ],
+      "pronunciatio": "\u2601\ufe0f",
+      "description": "Monitoring Patient 9 @ Patient 9",
+      "chat": null
+    },
+    "Patient 1": {
+      "movement": [
+        1,
+        10
+      ],
+      "pronunciatio": "\u231b",
+      "description": "None @ ed map:emergency department:waiting room:waiting room chair",
+      "chat": null
+    },
+    "Patient 2": {
+      "movement": [
+        3,
+        9
+      ],
+      "pronunciatio": "\u231b",
+      "description": "None @ ed map:emergency department:waiting room:waiting room chair",
+      "chat": null
+    },
+    "Patient 3": {
+      "movement": [
+        27,
+        15
+      ],
+      "pronunciatio": "\ud83e\udd22",
+      "description": "Waiting to interact with Doctor 1.",
+      "chat": [
+        [
+          "Doctor 1",
+          "Thanks\u2014so this started this morning and it\u2019s a sharp, one-sided pain about 6/10 that\u2019s tender to touch and worse with deep breaths or movement. Any shortness of breath, cough, fever, leg swelling, or have you had any recent injury, heavy lifting, or long travel?"
+        ],
+        [
+          "Patient 3",
+          "I\u2019m not really short of breath, it just hurts more when I take a deep breath, and I haven\u2019t had a cough or fever. No leg swelling and no long trips lately\u2014though I did help a friend move some boxes yesterday, so maybe I pulled something? I didn\u2019t have any accident or get hit in the chest."
+        ]
+      ]
+    },
+    "Patient 5": {
+      "movement": [
+        27,
+        17
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (27, 17)",
+      "chat": null
+    },
+    "Patient 6": {
+      "movement": [
+        27,
+        13
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (27, 13)",
+      "chat": null
+    },
+    "Patient 7": {
+      "movement": [
+        27,
+        9
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (27, 9)",
+      "chat": null
+    },
+    "Patient 9": {
+      "movement": [
+        11,
+        2
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (11, 2)",
+      "chat": null
+    },
+    "Patient 10": {
+      "movement": [
+        23,
+        2
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (23, 2)",
+      "chat": null
+    },
+    "Patient 12": {
+      "movement": [
+        15,
+        2
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (15, 2)",
+      "chat": null
+    }
+  },
+  "meta": {
+    "curr_time": "January 01, 2024, 08:12:00"
+  }
+}

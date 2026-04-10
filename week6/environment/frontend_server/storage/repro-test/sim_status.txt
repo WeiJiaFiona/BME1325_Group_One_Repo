@@ -1,0 +1,36 @@
+============================================================
+  ED SIMULATION STATUS  —  Step 30
+============================================================
+  Sim time : Jan 01 2024  06:30   (elapsed 0h 30m)
+  Patients : 32 in ED  |  0 completed  |  0 left ED
+
+  PATIENT STATES
+  ----------------------------------------
+    WAITING_FOR_TRIAGE                    21
+    TRIAGE                                 1
+    WAITING_FOR_NURSE                      2
+    WAITING_FOR_FIRST_ASSESSMENT           8
+
+  ZONE OCCUPANCY  (current / capacity)
+  ----------------------------------------
+  trauma room                1 / 1
+  major injuries zone        4 / 5
+  minor injuries zone        3 / 5
+  diagnostic room            0 / 2
+
+  QUEUES
+  ----------------------------------------
+    Triage queue                21
+    Bedside nurse waiting        2
+    Pager (CTAS 1)               0
+    Doctor global queue           5
+
+  NURSES  (20 total)
+  ----------------------------------------
+    Transferring                 1
+
+  DOCTORS  (1 total, 0 accepting patients)
+  ----------------------------------------
+    Doctor 1              5 / 5 assigned
+
+============================================================

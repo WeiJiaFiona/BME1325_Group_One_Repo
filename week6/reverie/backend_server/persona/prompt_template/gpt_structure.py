@@ -1,0 +1,525 @@
+import os
+import time
+import json
+import hashlib
+from typing import Optional
+from pathlib import Path
+from openai import AzureOpenAI, OpenAI
+import requests
+
+from utils import *
+from openai_cost_logger import DEFAULT_LOG_PATH
+from persona.prompt_template.openai_logger_singleton import OpenAICostLogger_Singleton
+
+
+# ---------------------------------------------------------------------------
+# Retry helper for transient OpenAI errors (500, 502, 503, 429, etc.)
+# Uses exponential backoff: 60s -> 120s -> 300s (1 min, 2 min, 5 min)
+# ---------------------------------------------------------------------------
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503}
+_RETRY_DELAYS = [60, 120, 300]  # seconds
+_LOCAL_EMBED_DIM = int(os.environ.get("LOCAL_EMBEDDING_DIM", "1536"))
+
+
+def _is_retryable(exc):
+    """Return True if the exception looks like a transient OpenAI error."""
+    status = getattr(exc, "status_code", None) or getattr(exc, "http_status", None)
+    if status and int(status) in _RETRYABLE_STATUS_CODES:
+        return True
+    msg = str(exc).lower()
+    return any(k in msg for k in ("server_error", "rate limit", "overloaded", "502", "503"))
+
+
+def _config_from_env() -> dict:
+    """Build openai_config from environment variables."""
+    return {
+        "client":               os.environ["OPENAI_CLIENT"],
+        "model":                os.environ["OPENAI_MODEL"],
+        "model-key":            os.environ["OPENAI_KEY"],
+        "model-endpoint":       os.environ.get("OPENAI_ENDPOINT", ""),
+        "model-api-version":    os.environ.get("OPENAI_API_VERSION", ""),
+        "model-costs": {
+            "input":  float(os.environ.get("OPENAI_MODEL_COST_INPUT", "0.0")),
+            "output": float(os.environ.get("OPENAI_MODEL_COST_OUTPUT", "0.0")),
+        },
+        "embeddings-client":     os.environ["EMBEDDINGS_CLIENT"],
+        "embeddings":            os.environ["EMBEDDINGS_MODEL"],
+        "embeddings-key":        os.environ["EMBEDDINGS_KEY"],
+        "embeddings-endpoint":   os.environ.get("EMBEDDINGS_ENDPOINT", ""),
+        "embeddings-api-version": os.environ.get("EMBEDDINGS_API_VERSION", ""),
+        "embeddings-costs": {
+            "input":  float(os.environ.get("EMBEDDINGS_COST_INPUT", "0.0")),
+            "output": float(os.environ.get("EMBEDDINGS_COST_OUTPUT", "0.0")),
+        },
+        "experiment-name": os.environ.get("EXPERIMENT_NAME", "edsim"),
+        "cost-upperbound": float(os.environ.get("COST_UPPERBOUND", "100.0")),
+    }
+
+
+CONFIG_PATH = Path(__file__).resolve().parents[4] / 'openai_config.json'
+
+if os.environ.get("OPENAI_KEY"):
+    openai_config = _config_from_env()
+elif CONFIG_PATH.exists():
+    with open(CONFIG_PATH, "r") as f:
+        openai_config = json.load(f)
+else:
+    raise RuntimeError(
+        "No OpenAI credentials found. "
+        "Set OPENAI_KEY (and related env vars) or create openai_config.json."
+    )
+
+def setup_client(type: str, config: dict):
+  """Setup the OpenAI client.
+
+  Args:
+      type (str): the type of client. Either "azure" or "openai".
+      config (dict): the configuration for the client.
+
+  Raises:
+      ValueError: if the client is invalid.
+
+  Returns:
+      The client object created, either AzureOpenAI or OpenAI.
+  """
+  if type == "azure":
+    client = AzureOpenAI(
+        azure_endpoint=config["endpoint"],
+        api_key=config["key"],
+        api_version=config["api-version"],
+    )
+  elif type == "openai":
+    kwargs = {"api_key": config["key"]}
+    # Support OpenAI-compatible providers via custom base URL.
+    if config.get("endpoint"):
+      kwargs["base_url"] = config["endpoint"]
+    client = OpenAI(**kwargs)
+  else:
+    raise ValueError("Invalid client")
+  return client
+
+
+def _looks_like_start_endpoint(url: str) -> bool:
+  if not url:
+    return False
+  normalized = url.strip().rstrip("/").lower()
+  return normalized.endswith("/api/v1/start")
+
+
+_MODEL_ENDPOINT = openai_config.get("model-endpoint", "")
+_EMBEDDINGS_ENDPOINT = openai_config.get("embeddings-endpoint", "")
+_USE_START_ENDPOINT = _looks_like_start_endpoint(_MODEL_ENDPOINT)
+_FORCE_LOCAL_EMBEDDINGS = os.environ.get("USE_LOCAL_EMBEDDINGS", "").lower() in ("1", "true", "yes")
+
+
+def _extract_response_text(payload):
+  """Extract model text from different response schemas."""
+  if isinstance(payload, dict):
+    choices = payload.get("choices")
+    if isinstance(choices, list) and choices:
+      first = choices[0]
+      if isinstance(first, dict):
+        message = first.get("message")
+        if isinstance(message, dict):
+          content = message.get("content")
+          if isinstance(content, str):
+            return content
+          if isinstance(content, list):
+            txt = []
+            for item in content:
+              if isinstance(item, dict):
+                if item.get("type") == "text" and isinstance(item.get("text"), str):
+                  txt.append(item["text"])
+                elif isinstance(item.get("content"), str):
+                  txt.append(item["content"])
+              elif isinstance(item, str):
+                txt.append(item)
+            if txt:
+              return "\n".join(txt)
+        if isinstance(first.get("text"), str):
+          return first["text"]
+
+    for key in ("output_text", "response", "output", "text", "content", "result"):
+      if isinstance(payload.get(key), str):
+        return payload[key]
+
+    data = payload.get("data")
+    if isinstance(data, dict):
+      for key in ("text", "response", "output", "content"):
+        if isinstance(data.get(key), str):
+          return data[key]
+
+  if isinstance(payload, str):
+    return payload
+  raise ValueError(f"Cannot parse text from response payload keys={list(payload.keys()) if isinstance(payload, dict) else type(payload)}")
+
+
+def _raw_start_chat_request(prompt: str, gpt_parameter: Optional[dict] = None) -> str:
+  if not _MODEL_ENDPOINT:
+    raise RuntimeError("OPENAI_ENDPOINT/model-endpoint is required for /api/v1/start mode.")
+
+  headers = {
+    "accept": "application/json",
+    "Authorization": f"Bearer {openai_config['model-key']}",
+    "Content-Type": "application/json",
+  }
+  payload = {
+    "model": openai_config["model"],
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": prompt}
+        ]
+      }
+    ],
+    "temperature": 0,
+    "n": 1,
+    "stream": False,
+  }
+  if gpt_parameter:
+    payload["model"] = gpt_parameter.get("engine", payload["model"])
+    payload["temperature"] = gpt_parameter.get("temperature", payload["temperature"])
+    payload["top_p"] = gpt_parameter.get("top_p", 1)
+    payload["frequency_penalty"] = gpt_parameter.get("frequency_penalty", 0)
+    payload["presence_penalty"] = gpt_parameter.get("presence_penalty", 0)
+    if gpt_parameter.get("max_tokens") is not None:
+      payload["max_tokens"] = gpt_parameter["max_tokens"]
+    if gpt_parameter.get("stop") is not None:
+      payload["stop"] = gpt_parameter["stop"]
+
+  response = requests.post(_MODEL_ENDPOINT, headers=headers, json=payload, timeout=120)
+  response.raise_for_status()
+  return _extract_response_text(response.json())
+
+
+def _deterministic_local_embedding(text: str, dim: int = _LOCAL_EMBED_DIM):
+  # Hash-based deterministic pseudo-embedding used when no embedding API is available.
+  raw = hashlib.sha256(text.encode("utf-8")).digest()
+  vec = []
+  i = 0
+  while len(vec) < dim:
+    block = hashlib.sha256(raw + str(i).encode("utf-8")).digest()
+    for b in block:
+      vec.append((b / 255.0) * 2 - 1)
+      if len(vec) == dim:
+        break
+    i += 1
+  return vec
+
+if openai_config["client"] == "azure":
+  client = setup_client("azure", {
+      "endpoint": openai_config["model-endpoint"],
+      "key": openai_config["model-key"],
+      "api-version": openai_config["model-api-version"],
+  })
+elif openai_config["client"] == "openai":
+  client = setup_client("openai", {
+      "key": openai_config["model-key"],
+      "endpoint": openai_config.get("model-endpoint", ""),
+  })
+
+if openai_config["embeddings-client"] == "azure":  
+  embeddings_client = setup_client("azure", {
+      "endpoint": openai_config["embeddings-endpoint"],
+      "key": openai_config["embeddings-key"],
+      "api-version": openai_config["embeddings-api-version"],
+  })
+elif openai_config["embeddings-client"] == "openai":
+  embeddings_client = setup_client("openai", {
+      "key": openai_config["embeddings-key"],
+      "endpoint": openai_config.get("embeddings-endpoint", ""),
+  })
+else:
+  raise ValueError("Invalid embeddings client")
+
+cost_logger = OpenAICostLogger_Singleton(
+  experiment_name = openai_config["experiment-name"],
+  log_folder = DEFAULT_LOG_PATH,
+  cost_upperbound = openai_config["cost-upperbound"]
+)
+
+
+def temp_sleep(seconds=0.1):
+  time.sleep(seconds)
+
+
+def ChatGPT_single_request(prompt):
+  temp_sleep()
+  for attempt, delay in enumerate(_RETRY_DELAYS + [None]):
+    try:
+      if _USE_START_ENDPOINT:
+        return _raw_start_chat_request(prompt)
+      completion = client.chat.completions.create(
+        model=openai_config["model"],
+        messages=[{"role": "user", "content": prompt}]
+      )
+      cost_logger.update_cost(completion, input_cost=openai_config["model-costs"]["input"], output_cost=openai_config["model-costs"]["output"])
+      return completion.choices[0].message.content
+    except Exception as e:
+      if delay is not None and _is_retryable(e):
+        print(f"ChatGPT_single_request retry {attempt+1}/{len(_RETRY_DELAYS)}, "
+              f"waiting {delay}s: {e}")
+        time.sleep(delay)
+      else:
+        raise
+
+
+def ChatGPT_request(prompt):
+  """
+  Given a prompt and a dictionary of GPT parameters, make a request to OpenAI
+  server and returns the response.
+  ARGS:
+    prompt: a str prompt
+    gpt_parameter: a python dictionary with the keys indicating the names of
+                   the parameter and the values indicating the parameter
+                   values.
+  RETURNS:
+    a str of GPT-3's response.
+  """
+  # temp_sleep()
+  for attempt, delay in enumerate(_RETRY_DELAYS + [None]):
+    try:
+      if _USE_START_ENDPOINT:
+        return _raw_start_chat_request(prompt)
+      completion = client.chat.completions.create(
+      model=openai_config["model"],
+      messages=[{"role": "user", "content": prompt}]
+      )
+      cost_logger.update_cost(completion, input_cost=openai_config["model-costs"]["input"], output_cost=openai_config["model-costs"]["output"])
+      return completion.choices[0].message.content
+    except Exception as e:
+      if delay is not None and _is_retryable(e):
+        print(f"ChatGPT_request retry {attempt+1}/{len(_RETRY_DELAYS)}, "
+              f"waiting {delay}s: {e}")
+        time.sleep(delay)
+      else:
+        print(f"Error: {e}")
+        return "ChatGPT ERROR"
+
+
+def ChatGPT_safe_generate_response(prompt, 
+                                   example_output,
+                                   special_instruction,
+                                   repeat=3,
+                                   fail_safe_response="error",
+                                   func_validate=None,
+                                   func_clean_up=None,
+                                   verbose=False): 
+  # prompt = 'GPT-3 Prompt:\n"""\n' + prompt + '\n"""\n'
+  prompt = '"""\n' + prompt + '\n"""\n'
+  prompt += f"Output the response to the prompt above in json. {special_instruction}\n"
+  prompt += "Example output json:\n"
+  prompt += '{"output": "' + str(example_output) + '"}'
+
+  if verbose: 
+    print ("CHAT GPT PROMPT")
+    print (prompt)
+
+  for i in range(repeat): 
+
+    try: 
+      curr_gpt_response = ChatGPT_request(prompt).strip()
+      end_index = curr_gpt_response.rfind('}') + 1
+      curr_gpt_response = curr_gpt_response[:end_index]
+      curr_gpt_response = json.loads(curr_gpt_response)["output"]
+      
+      if func_validate(curr_gpt_response, prompt=prompt): 
+        return func_clean_up(curr_gpt_response, prompt=prompt)
+      
+      if verbose: 
+        print ("---- repeat count: \n", i, curr_gpt_response)
+        print (curr_gpt_response)
+        print ("~~~~")
+
+    except: 
+      pass
+
+  return False
+
+
+def ChatGPT_safe_generate_response_OLD(prompt, 
+                                   repeat=3,
+                                   fail_safe_response="error",
+                                   func_validate=None,
+                                   func_clean_up=None,
+                                   verbose=True): 
+  if verbose: 
+    print ("CHAT GPT PROMPT")
+    print (prompt)
+
+  for i in range(repeat): 
+    try: 
+      curr_gpt_response = ChatGPT_request(prompt).strip()
+      print(curr_gpt_response)
+      if func_validate(curr_gpt_response, prompt=prompt): 
+        return func_clean_up(curr_gpt_response, prompt=prompt)
+      if verbose: 
+        print (f"---- repeat count: {i}")
+        print (curr_gpt_response)
+        print ("~~~~")
+
+    except: 
+      pass
+  print ("FAIL SAFE TRIGGERED") 
+  return fail_safe_response
+
+
+def GPT_request(prompt, gpt_parameter):
+  """
+  Given a prompt and a dictionary of GPT parameters, make a request to OpenAI
+  server and returns the response.
+  ARGS:
+    prompt: a str prompt
+    gpt_parameter: a python dictionary with the keys indicating the names of
+                   the parameter and the values indicating the parameter
+                   values.
+  RETURNS:
+    a str of GPT-3's response.
+  """
+  temp_sleep()
+  for attempt, delay in enumerate(_RETRY_DELAYS + [None]):
+    try:
+      if _USE_START_ENDPOINT:
+        return _raw_start_chat_request(prompt, gpt_parameter=gpt_parameter)
+      messages = [{
+        "role": "system", "content": prompt
+      }]
+      response = client.chat.completions.create(
+                  model=gpt_parameter["engine"],
+                  messages=messages,
+                  temperature=gpt_parameter["temperature"],
+                  max_tokens=gpt_parameter["max_tokens"],
+                  top_p=gpt_parameter["top_p"],
+                  frequency_penalty=gpt_parameter["frequency_penalty"],
+                  presence_penalty=gpt_parameter["presence_penalty"],
+                  stream=gpt_parameter["stream"],
+                  stop=gpt_parameter["stop"],)
+      cost_logger.update_cost(response=response, input_cost=openai_config["model-costs"]["input"], output_cost=openai_config["model-costs"]["output"])
+      return response.choices[0].message.content
+    except Exception as e:
+      if delay is not None and _is_retryable(e):
+        print(f"GPT_request retry {attempt+1}/{len(_RETRY_DELAYS)}, "
+              f"waiting {delay}s: {e}")
+        time.sleep(delay)
+      else:
+        print(f"Error: {e}")
+        return "TOKEN LIMIT EXCEEDED"
+
+
+def generate_prompt(curr_input, prompt_lib_file): 
+  """
+  Takes in the current input (e.g. comment that you want to classifiy) and 
+  the path to a prompt file. The prompt file contains the raw str prompt that
+  will be used, which contains the following substr: !<INPUT>! -- this 
+  function replaces this substr with the actual curr_input to produce the 
+  final promopt that will be sent to the GPT3 server. 
+  ARGS:
+    curr_input: the input we want to feed in (IF THERE ARE MORE THAN ONE
+                INPUT, THIS CAN BE A LIST.)
+    prompt_lib_file: the path to the promopt file. 
+  RETURNS: 
+    a str prompt that will be sent to OpenAI's GPT server.  
+  """
+  if type(curr_input) == type("string"): 
+    curr_input = [curr_input]
+  curr_input = [str(i) for i in curr_input]
+
+  f = open(prompt_lib_file, "r")
+  prompt = f.read()
+  f.close()
+  for count, i in enumerate(curr_input):   
+    prompt = prompt.replace(f"!<INPUT {count}>!", i)
+  if "<commentblockmarker>###</commentblockmarker>" in prompt: 
+    prompt = prompt.split("<commentblockmarker>###</commentblockmarker>")[1]
+  return prompt.strip()
+
+
+def safe_generate_response(prompt, 
+                           gpt_parameter,
+                           repeat=5,
+                           fail_safe_response="error",
+                           func_validate=None,
+                           func_clean_up=None,
+                           verbose=False): 
+  if verbose: 
+    print (prompt)
+
+  for i in range(repeat): 
+    curr_gpt_response = GPT_request(prompt, gpt_parameter)
+    try:
+      if func_validate(curr_gpt_response, prompt=prompt): 
+        return func_clean_up(curr_gpt_response, prompt=prompt)
+      if verbose: 
+        print ("---- repeat count: ", i, curr_gpt_response)
+        print (curr_gpt_response)
+        print ("~~~~")
+    except:
+      pass
+  return fail_safe_response
+
+
+def get_embedding(text, model=openai_config["embeddings"]):
+  text = text.replace("\n", " ")
+  if not text:
+    text = "this is blank"
+  if _FORCE_LOCAL_EMBEDDINGS:
+    return _deterministic_local_embedding(text)
+  for attempt, delay in enumerate(_RETRY_DELAYS + [None]):
+    try:
+      response = embeddings_client.embeddings.create(input=[text], model=model)
+      cost_logger.update_cost(response=response, input_cost=openai_config["embeddings-costs"]["input"], output_cost=openai_config["embeddings-costs"]["output"])
+      return response.data[0].embedding
+    except Exception as e:
+      if delay is not None and _is_retryable(e):
+        print(f"get_embedding retry {attempt+1}/{len(_RETRY_DELAYS)}, "
+              f"waiting {delay}s: {e}")
+        time.sleep(delay)
+      else:
+        print(f"get_embedding failed after retries, switching to local embeddings: {e}")
+        return _deterministic_local_embedding(text)
+
+
+if __name__ == '__main__':
+  gpt_parameter = {"engine": openai_config["model"], "max_tokens": 50, 
+                   "temperature": 0, "top_p": 1, "stream": False,
+                   "frequency_penalty": 0, "presence_penalty": 0, 
+                   "stop": ['"']}
+  curr_input = ["driving to a friend's house"]
+  prompt_lib_file = "prompt_template/test_prompt_July5.txt"
+  prompt = generate_prompt(curr_input, prompt_lib_file)
+
+  def __func_validate(gpt_response): 
+    if len(gpt_response.strip()) <= 1:
+      return False
+    if len(gpt_response.strip().split(" ")) > 1: 
+      return False
+    return True
+  def __func_clean_up(gpt_response):
+    cleaned_response = gpt_response.strip()
+    return cleaned_response
+
+  output = safe_generate_response(prompt, 
+                                 gpt_parameter,
+                                 5,
+                                 "rest",
+                                 __func_validate,
+                                 __func_clean_up,
+                                 True)
+
+  print (output)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

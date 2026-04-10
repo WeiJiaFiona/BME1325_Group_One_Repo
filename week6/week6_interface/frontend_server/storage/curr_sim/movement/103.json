@@ -1,0 +1,178 @@
+{
+  "persona": {
+    "Doctor 1": {
+      "movement": [
+        10,
+        2
+      ],
+      "pronunciatio": "\u23f3",
+      "description": "conversing about an emergency doctor (Dr. 1) asking Patient 12 about a severe headache that started earlier today with dizziness, confusion, nausea, and sensitivity to light and noise @ <waiting> 10 2",
+      "chat": null
+    },
+    "Triage Nurse 1": {
+      "movement": [
+        12,
+        13
+      ],
+      "pronunciatio": null,
+      "description": "None @ ed map:emergency department:triage room:computer",
+      "chat": null
+    },
+    "Bedside Nurse 1": {
+      "movement": [
+        14,
+        2
+      ],
+      "pronunciatio": "\u2601\ufe0f",
+      "description": "Monitoring Patient 9 @ Patient 9",
+      "chat": null
+    },
+    "Patient 1": {
+      "movement": [
+        1,
+        10
+      ],
+      "pronunciatio": "\u231b",
+      "description": "None @ ed map:emergency department:waiting room:waiting room chair",
+      "chat": null
+    },
+    "Patient 2": {
+      "movement": [
+        3,
+        9
+      ],
+      "pronunciatio": "\u231b",
+      "description": "None @ ed map:emergency department:waiting room:waiting room chair",
+      "chat": null
+    },
+    "Doctor 2": {
+      "movement": [
+        27,
+        10
+      ],
+      "pronunciatio": "\ud83d\udcac",
+      "description": "Waiting to interact with Patient 6.",
+      "chat": [
+        [
+          "Doctor 2",
+          "Hi, I\u2019m Dr. Patel\u2014one of the ER doctors. I understand you\u2019ve had a severe headache since around 6 a.m.; can you tell me exactly when it started, how bad it is from 0\u201310, and whether you\u2019ve had any dizziness, nausea, light/noise sensitivity, or vision changes?"
+        ],
+        [
+          "Patient 6",
+          "Yeah, it hit me right around 6 this morning, kind of all at once. I\u2019d say it\u2019s about a 6 out of 10, and I\u2019ve been really dizzy and nauseous, and the lights and sounds feel way too intense. My head feels foggy too\u2014like I can\u2019t think straight."
+        ]
+      ]
+    },
+    "Bedside Nurse 2": {
+      "movement": [
+        23,
+        9
+      ],
+      "pronunciatio": "\u2601\ufe0f",
+      "description": "Monitoring Patient 5 @ Patient 5",
+      "chat": null
+    },
+    "Bedside Nurse 3": {
+      "movement": [
+        13,
+        2
+      ],
+      "pronunciatio": "\u2601\ufe0f",
+      "description": "Monitoring Patient 9 @ Patient 9",
+      "chat": null
+    },
+    "Triage Nurse 2": {
+      "movement": [
+        12,
+        13
+      ],
+      "pronunciatio": null,
+      "description": "None @ ed map:emergency department:triage room:computer",
+      "chat": null
+    },
+    "Patient 3": {
+      "movement": [
+        27,
+        15
+      ],
+      "pronunciatio": "\ud83e\udd22",
+      "description": "conversing about Dr. Patel, an emergency doctor, asking the patient about their symptoms and onset, and the patient reporting a severe headache since this morning with dizziness, confusion, nausea, and light sensitivity @ ed map:emergency department:minor injuries zone:bed",
+      "chat": null
+    },
+    "Patient 4": {
+      "movement": [
+        2,
+        19
+      ],
+      "pronunciatio": "\ud83e\udd22",
+      "description": "conversing about Dr. Patel, an emergency doctor, asking the patient about symptoms that started around 6 a.m., including a severe headache with dizziness, brain fog, light and noise sensitivity, and nausea @ ed map:emergency department:exit",
+      "chat": null
+    },
+    "Patient 5": {
+      "movement": [
+        27,
+        17
+      ],
+      "pronunciatio": "\u231b",
+      "description": "None @ <tile> (27, 17)",
+      "chat": null
+    },
+    "Patient 6": {
+      "movement": [
+        27,
+        13
+      ],
+      "pronunciatio": "\ud83d\udeb6\u200d\u2642\ufe0f",
+      "description": "Waiting to interact with Doctor 2.",
+      "chat": [
+        [
+          "Doctor 2",
+          "Hi, I\u2019m Dr. Patel\u2014one of the ER doctors. I understand you\u2019ve had a severe headache since around 6 a.m.; can you tell me exactly when it started, how bad it is from 0\u201310, and whether you\u2019ve had any dizziness, nausea, light/noise sensitivity, or vision changes?"
+        ],
+        [
+          "Patient 6",
+          "Yeah, it hit me right around 6 this morning, kind of all at once. I\u2019d say it\u2019s about a 6 out of 10, and I\u2019ve been really dizzy and nauseous, and the lights and sounds feel way too intense. My head feels foggy too\u2014like I can\u2019t think straight."
+        ]
+      ]
+    },
+    "Patient 7": {
+      "movement": [
+        27,
+        9
+      ],
+      "pronunciatio": "\u231b",
+      "description": "None @ <tile> (27, 9)",
+      "chat": null
+    },
+    "Patient 9": {
+      "movement": [
+        11,
+        2
+      ],
+      "pronunciatio": "\u231b",
+      "description": "conversing about Dr. Patel, an emergency physician, asking Patient 9 about the onset and circumstances of a severe headache that began around 6 a.m. after waking, with associated dizziness, mental fog, and light sensitivity @ (11, 2)",
+      "chat": null
+    },
+    "Patient 10": {
+      "movement": [
+        23,
+        2
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (23, 2)",
+      "chat": null
+    },
+    "Patient 12": {
+      "movement": [
+        15,
+        2
+      ],
+      "pronunciatio": "\u231b",
+      "description": "conversing about an emergency doctor (Dr. 1) asking Patient 12 about a severe headache that started earlier today with dizziness, confusion, nausea, and sensitivity to light and noise @ (15, 2)",
+      "chat": null
+    }
+  },
+  "meta": {
+    "curr_time": "January 01, 2024, 07:43:00"
+  }
+}

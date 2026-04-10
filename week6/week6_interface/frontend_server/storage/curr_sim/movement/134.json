@@ -1,0 +1,106 @@
+{
+  "persona": {
+    "Doctor 1": {
+      "movement": [
+        13,
+        4
+      ],
+      "pronunciatio": "\u23f3",
+      "description": "conversing about an emergency doctor asking what brought the patient in and where it hurts most, and the patient describing sharp, stabbing one-sided chest pain that is tender to touch, worsens with deep breaths or movement, and is rated 6/10 @ ed map:emergency department:major injuries zone",
+      "chat": null
+    },
+    "Triage Nurse 1": {
+      "movement": [
+        12,
+        13
+      ],
+      "pronunciatio": null,
+      "description": "None @ ed map:emergency department:triage room:computer",
+      "chat": null
+    },
+    "Bedside Nurse 1": {
+      "movement": [
+        17,
+        2
+      ],
+      "pronunciatio": "\u2601\ufe0f",
+      "description": "Monitoring Patient 11 @ Patient 11",
+      "chat": null
+    },
+    "Patient 1": {
+      "movement": [
+        1,
+        10
+      ],
+      "pronunciatio": "\u231b",
+      "description": "None @ ed map:emergency department:waiting room:waiting room chair",
+      "chat": null
+    },
+    "Patient 2": {
+      "movement": [
+        3,
+        9
+      ],
+      "pronunciatio": "\u231b",
+      "description": "None @ ed map:emergency department:waiting room:waiting room chair",
+      "chat": null
+    },
+    "Patient 4": {
+      "movement": [
+        27,
+        11
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (27, 11)",
+      "chat": null
+    },
+    "Patient 5": {
+      "movement": [
+        27,
+        17
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (27, 17)",
+      "chat": null
+    },
+    "Patient 9": {
+      "movement": [
+        11,
+        2
+      ],
+      "pronunciatio": "\u231b",
+      "description": "conversing about an emergency doctor asking what brought the patient in and where it hurts most, and the patient describing sharp, stabbing one-sided chest pain that is tender to touch, worsens with deep breaths or movement, and is rated 6/10 @ (11, 2)",
+      "chat": null
+    },
+    "Patient 10": {
+      "movement": [
+        23,
+        2
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (23, 2)",
+      "chat": null
+    },
+    "Patient 11": {
+      "movement": [
+        19,
+        2
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (19, 2)",
+      "chat": null
+    },
+    "Patient 12": {
+      "movement": [
+        15,
+        2
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (15, 2)",
+      "chat": null
+    }
+  },
+  "meta": {
+    "curr_time": "January 01, 2024, 08:14:00"
+  }
+}

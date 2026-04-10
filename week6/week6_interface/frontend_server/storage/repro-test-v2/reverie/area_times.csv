@@ -1,0 +1,13 @@
+name,CTAS,exit,waiting room,hallway,triage room
+Patient 12,3,,,,
+Patient 11,3,1.0,,,
+Patient 10,2,1.0,1.0,,
+Patient 9,3,1.0,2.0,,
+Patient 8,2,1.0,3.0,,
+Patient 7,3,1.0,4.0,,
+Patient 6,3,1.0,5.0,,
+Patient 5,3,1.0,6.0,,
+Patient 4,2,1.0,7.0,,
+Patient 3,4,1.0,5.0,1.0,2.0
+Patient 2,0,,7.0,2.0,1.0
+Patient 1,0,,8.0,1.0,1.0

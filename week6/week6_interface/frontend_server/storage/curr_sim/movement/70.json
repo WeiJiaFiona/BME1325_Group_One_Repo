@@ -1,0 +1,115 @@
+{
+  "persona": {
+    "Doctor 1": {
+      "movement": [
+        22,
+        8
+      ],
+      "pronunciatio": null,
+      "description": "None @ Patient 3",
+      "chat": null
+    },
+    "Triage Nurse 1": {
+      "movement": [
+        12,
+        13
+      ],
+      "pronunciatio": null,
+      "description": "None @ ed map:emergency department:triage room:computer",
+      "chat": null
+    },
+    "Bedside Nurse 1": {
+      "movement": [
+        13,
+        2
+      ],
+      "pronunciatio": "\u2601\ufe0f",
+      "description": "Monitoring Patient 9 @ Patient 9",
+      "chat": null
+    },
+    "Patient 1": {
+      "movement": [
+        1,
+        10
+      ],
+      "pronunciatio": "\u231b",
+      "description": "None @ ed map:emergency department:waiting room:waiting room chair",
+      "chat": null
+    },
+    "Patient 2": {
+      "movement": [
+        3,
+        9
+      ],
+      "pronunciatio": "\u231b",
+      "description": "None @ ed map:emergency department:waiting room:waiting room chair",
+      "chat": null
+    },
+    "Patient 3": {
+      "movement": [
+        3,
+        3
+      ],
+      "pronunciatio": "\ud83d\udeb6\u200d\u2642\ufe0f",
+      "description": "None @ ed map:emergency department:diagnostic room:diagnostic table",
+      "chat": null
+    },
+    "Patient 5": {
+      "movement": [
+        27,
+        17
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (27, 17)",
+      "chat": null
+    },
+    "Patient 6": {
+      "movement": [
+        27,
+        13
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (27, 13)",
+      "chat": null
+    },
+    "Patient 7": {
+      "movement": [
+        27,
+        9
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (27, 9)",
+      "chat": null
+    },
+    "Patient 9": {
+      "movement": [
+        11,
+        2
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (11, 2)",
+      "chat": null
+    },
+    "Patient 10": {
+      "movement": [
+        23,
+        2
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (23, 2)",
+      "chat": null
+    },
+    "Patient 12": {
+      "movement": [
+        15,
+        2
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (15, 2)",
+      "chat": null
+    }
+  },
+  "meta": {
+    "curr_time": "January 01, 2024, 07:10:00"
+  }
+}

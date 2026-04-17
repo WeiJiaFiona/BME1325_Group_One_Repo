@@ -1,0 +1,33 @@
+name,CTAS,ICD_code,injuries_zone,door_to_doctor_minutes,length_of_stay_minutes,treatment_time_minutes,boarding_time_minutes,left_without_being_seen,lwbs_wait_minutes,admitted_to_hospital,lingered_after_discharge,completed_treatment,stage1_target_minutes,stage2_target_minutes,stage3_target_minutes
+Patient 32,2,R55,major injuries zone,10.0,10.0,0.0,0.0,False,,False,False,False,516.2,19.3,104.6
+Patient 31,3,R07.3,minor injuries zone,11.0,11.0,0.0,0.0,False,,False,False,False,116.4,220.5,0.0
+Patient 30,2,R55,major injuries zone,12.0,12.0,0.0,0.0,False,,False,False,False,54.1,556.6,0.0
+Patient 29,2,R55,major injuries zone,13.0,13.0,0.0,0.0,False,,False,False,False,113.3,119.6,0.0
+Patient 28,2,R06.0,major injuries zone,14.0,14.0,0.0,0.0,False,,False,False,False,421.2,172.6,17.4
+Patient 27,3,R07.3,minor injuries zone,15.0,15.0,0.0,0.0,False,,False,False,False,262.3,53.3,0.0
+Patient 26,2,R07.4,major injuries zone,16.0,16.0,0.0,0.0,False,,False,False,False,63.4,161.3,94.6
+Patient 25,2,R07.4,major injuries zone,17.0,17.0,0.0,0.0,False,,False,False,False,560.3,584.9,0.0
+Patient 24,2,R07.4,major injuries zone,18.0,18.0,0.0,0.0,False,,False,False,False,78.2,94.1,0.0
+Patient 23,2,R07.4,major injuries zone,19.0,19.0,0.0,0.0,False,,False,False,False,174.6,461.9,0.0
+Patient 22,2,R07.4,major injuries zone,20.0,20.0,0.0,0.0,False,,False,False,False,187.2,31.4,0.0
+Patient 21,2,R55,major injuries zone,21.0,21.0,0.0,0.0,False,,False,False,False,184.1,597.3,0.0
+Patient 20,3,R07.3,minor injuries zone,22.0,22.0,0.0,0.0,False,,False,False,False,131.6,120.0,0.0
+Patient 19,2,R07.4,major injuries zone,23.0,23.0,0.0,0.0,False,,False,False,False,199.8,362.6,0.0
+Patient 18,3,S06.0,major injuries zone,24.0,24.0,0.0,0.0,False,,False,False,False,114.5,30.5,0.0
+Patient 17,3,R07.3,minor injuries zone,25.0,25.0,0.0,0.0,False,,False,False,False,935.0,403.4,268.6
+Patient 16,4,N39.0,minor injuries zone,26.0,26.0,0.0,0.0,False,,False,False,False,230.7,54.1,0.0
+Patient 15,3,S06.0,major injuries zone,27.0,27.0,0.0,0.0,False,,False,False,False,58.5,498.6,210.1
+Patient 14,1,I46.9,trauma room,28.0,28.0,0.0,0.0,False,,False,False,False,189.4,158.8,0.0
+Patient 13,4,R42,minor injuries zone,29.0,29.0,0.0,0.0,False,,False,False,False,37.5,1356.4,0.0
+Patient 12,3,R10.4,minor injuries zone,30.0,30.0,0.0,0.0,False,,False,False,False,232.7,552.2,0.0
+Patient 11,3,S06.0,major injuries zone,31.0,31.0,0.0,0.0,False,,False,False,False,775.9,148.1,227.4
+Patient 10,2,R07.4,major injuries zone,32.0,32.0,0.0,0.0,False,,False,False,False,351.8,555.4,150.1
+Patient 9,4,R51,minor injuries zone,33.0,33.0,0.0,0.0,False,,False,False,False,106.2,76.3,607.8
+Patient 8,3,R07.3,minor injuries zone,34.0,34.0,0.0,0.0,False,,False,False,False,202.1,241.8,0.0
+Patient 7,2,R07.4,major injuries zone,35.0,35.0,0.0,0.0,False,,False,False,False,80.2,188.3,0.0
+Patient 6,3,R10.4,minor injuries zone,36.0,36.0,0.0,0.0,False,,False,False,False,217.7,289.4,10.3
+Patient 5,2,R55,major injuries zone,37.0,37.0,0.0,0.0,False,,False,False,False,146.4,166.7,0.0
+Patient 4,1,I46.9,trauma room,38.0,38.0,0.0,0.0,False,,False,False,False,458.0,470.3,0.0
+Patient 3,2,R07.4,major injuries zone,39.0,39.0,0.0,0.0,False,,False,False,False,115.9,72.7,0.0
+Patient 2,0,,,40.0,40.0,0.0,0.0,False,,False,False,False,157.9,354.1,0.0
+Patient 1,0,,,40.0,40.0,0.0,0.0,False,,False,False,False,88.2,629.0,0.0

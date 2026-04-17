@@ -1,0 +1,3 @@
+name,CTAS,ICD_code,injuries_zone,door_to_doctor_minutes,length_of_stay_minutes,treatment_time_minutes,boarding_time_minutes,left_without_being_seen,lwbs_wait_minutes,admitted_to_hospital,lingered_after_discharge,completed_treatment,stage1_target_minutes,stage2_target_minutes,stage3_target_minutes
+Patient 2,0,,,12.0,12.0,0.0,0.0,False,,False,False,False,157.9,354.1,0.0
+Patient 1,0,,,12.0,12.0,0.0,0.0,False,,False,False,False,88.2,629.0,0.0

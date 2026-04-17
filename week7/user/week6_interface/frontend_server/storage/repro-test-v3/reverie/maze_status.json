@@ -1,0 +1,109 @@
+{
+  "triage_patients": 0,
+  "injuries_zones": {
+    "change_bed_amount": [
+      "major injuries zone",
+      "minor injuries zone"
+    ],
+    "assessment_queue": [],
+    "bedside_nurse_waiting": [
+      [
+        9,
+        "Patient 1"
+      ],
+      [
+        9,
+        "Patient 2"
+      ]
+    ],
+    "pager": [],
+    "major injuries zone": {
+      "remove_beds": 0,
+      "current_patients": [],
+      "bed_assignments": {},
+      "capacity": 5,
+      "available_beds": [
+        [
+          11,
+          2
+        ],
+        [
+          15,
+          2
+        ],
+        [
+          19,
+          2
+        ],
+        [
+          23,
+          2
+        ],
+        [
+          27,
+          2
+        ]
+      ]
+    },
+    "minor injuries zone": {
+      "remove_beds": 0,
+      "current_patients": [],
+      "bed_assignments": {},
+      "capacity": 5,
+      "available_beds": [
+        [
+          27,
+          9
+        ],
+        [
+          27,
+          11
+        ],
+        [
+          27,
+          13
+        ],
+        [
+          27,
+          15
+        ],
+        [
+          27,
+          17
+        ]
+      ]
+    },
+    "trauma room": {
+      "remove_beds": 0,
+      "current_patients": [],
+      "bed_assignments": {},
+      "capacity": 1,
+      "available_beds": [
+        [
+          16,
+          14
+        ]
+      ]
+    },
+    "diagnostic room": {
+      "remove_beds": 0,
+      "current_patients": [],
+      "bed_assignments": {},
+      "capacity": 2
+    }
+  },
+  "triage_queue": [],
+  "patients_waiting_for_doctor": [
+    [
+      7,
+      "Patient 1"
+    ],
+    [
+      9,
+      "Patient 2"
+    ]
+  ],
+  "doctors_taking_more_patients": [
+    "Doctor 1"
+  ]
+}

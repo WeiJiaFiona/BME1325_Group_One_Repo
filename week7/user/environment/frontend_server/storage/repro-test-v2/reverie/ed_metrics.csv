@@ -1,0 +1,13 @@
+name,CTAS,ICD_code,injuries_zone,door_to_doctor_minutes,length_of_stay_minutes,treatment_time_minutes,boarding_time_minutes,left_without_being_seen,lwbs_wait_minutes,admitted_to_hospital,lingered_after_discharge,completed_treatment,stage1_target_minutes,stage2_target_minutes,stage3_target_minutes
+Patient 12,3,R10.4,minor injuries zone,0.0,0.0,0.0,0.0,False,,False,False,False,232.7,552.2,0.0
+Patient 11,3,R07.3,minor injuries zone,1.0,1.0,0.0,0.0,False,,False,False,False,775.9,148.1,227.4
+Patient 10,2,R06.0,major injuries zone,2.0,2.0,0.0,0.0,False,,False,False,False,351.8,555.4,150.1
+Patient 9,3,R07.3,minor injuries zone,3.0,3.0,0.0,0.0,False,,False,False,False,106.2,76.3,607.8
+Patient 8,2,R07.4,major injuries zone,4.0,4.0,0.0,0.0,False,,False,False,False,202.1,241.8,0.0
+Patient 7,3,R10.4,minor injuries zone,5.0,5.0,0.0,0.0,False,,False,False,False,80.2,188.3,0.0
+Patient 6,3,R07.3,minor injuries zone,6.0,6.0,0.0,0.0,False,,False,False,False,217.7,289.4,10.3
+Patient 5,3,R07.3,minor injuries zone,7.0,7.0,0.0,0.0,False,,False,False,False,146.4,166.7,0.0
+Patient 4,2,R07.4,major injuries zone,8.0,8.0,0.0,0.0,False,,False,False,False,458.0,470.3,0.0
+Patient 3,4,R51,minor injuries zone,9.0,9.0,0.0,0.0,False,,False,False,False,115.9,72.7,0.0
+Patient 2,0,,,10.0,10.0,0.0,0.0,False,,False,False,False,157.9,354.1,0.0
+Patient 1,0,,,10.0,10.0,0.0,0.0,False,,False,False,False,88.2,629.0,0.0

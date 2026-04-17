@@ -1,0 +1,106 @@
+{
+  "fork_sim_code": "ed_sim_n5",
+  "start_date": "January 01, 2024",
+  "curr_time": "January 01, 2024, 06:10:00",
+  "sec_per_step": 60,
+  "maze_name": "small_ed_layout",
+  "persona_names": [
+    [
+      "Doctor 1",
+      "Doctor"
+    ],
+    [
+      "Triage Nurse 1",
+      "TriageNurse"
+    ],
+    [
+      "Bedside Nurse 1",
+      "BedsideNurse"
+    ],
+    [
+      "Patient 1",
+      "Patient"
+    ],
+    [
+      "Patient 2",
+      "Patient"
+    ],
+    [
+      "Patient 3",
+      "Patient"
+    ],
+    [
+      "Patient 4",
+      "Patient"
+    ],
+    [
+      "Patient 5",
+      "Patient"
+    ],
+    [
+      "Patient 6",
+      "Patient"
+    ],
+    [
+      "Patient 7",
+      "Patient"
+    ],
+    [
+      "Patient 8",
+      "Patient"
+    ],
+    [
+      "Patient 9",
+      "Patient"
+    ],
+    [
+      "Patient 10",
+      "Patient"
+    ],
+    [
+      "Patient 11",
+      "Patient"
+    ],
+    [
+      "Patient 12",
+      "Patient"
+    ]
+  ],
+  "step": 10,
+  "seed": 42,
+  "patient_rate_modifier": 0.5,
+  "fill_injuries": 0.0,
+  "priority_factor": 3,
+  "testing_result_time": 45,
+  "testing_time": 20,
+  "add_patient_threshold": 999989,
+  "doctor_starting_amount": 1,
+  "triage_starting_amount": 1,
+  "bedside_starting_amount": 1,
+  "patient_walkout_probability": 0.0,
+  "patient_walkout_check_minutes": 20,
+  "patient_post_discharge_linger_probability": 0.0,
+  "patient_post_discharge_linger_minutes": 30,
+  "simulate_hospital_admission": false,
+  "admission_probability_by_ctas": {
+    "1": 0.6,
+    "2": 0.3,
+    "3": 0.1,
+    "4": 0.02,
+    "5": 0.0
+  },
+  "admission_boarding_minutes_min": 60,
+  "admission_boarding_minutes_max": 240,
+  "preload_waiting_room_patients": 0,
+  "preload_departure_window_hours": 6,
+  "priority_boost_interval_minutes": 5,
+  "global_queue_aging_interval_minutes": 15,
+  "diagnostic_room_capacity": 2,
+  "testing_probability_by_ctas": {
+    "1": 1.0,
+    "2": 0.8,
+    "3": 0.5,
+    "4": 0.3,
+    "5": 0.0
+  }
+}

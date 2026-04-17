@@ -1,4 +1,4 @@
-from week5_system.app.api_v1 import (
+from app_core.app.api_v1 import (
     reset_runtime_state,
     user_mode_chat_turn,
     user_mode_session_status,
@@ -151,3 +151,19 @@ def test_yes_no_short_answers_update_current_target_without_loop():
     assert q1 != ""
     assert q2 != ""
     assert q1 != q2
+
+
+def test_doctor_answers_patient_imaging_question_before_followup():
+    user_mode_chat_turn("我头很疼")
+    for _ in range(8):
+        called = user_mode_session_status()
+        if called["session"]["phase"] == "DOCTOR_CALLED":
+            break
+    if called["session"]["phase"] != "DOCTOR_CALLED":
+        called = user_mode_chat_turn("状态更新")
+
+    turn = user_mode_chat_turn("我头疼，我应该去扫描什么影像？")
+    doctor_msgs = [m["text"] for m in turn["messages"] if m["role"] == "doctor"]
+    assert doctor_msgs
+    merged = " ".join(doctor_msgs).lower()
+    assert ("ct" in merged) or ("mri" in merged) or ("影像" in merged) or ("扫描" in merged)

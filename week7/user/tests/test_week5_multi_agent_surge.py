@@ -1,4 +1,4 @@
-from week5_system.app.surge_sim import StaffingConfig, run_multi_agent_surge
+from app_core.app.surge_sim import StaffingConfig, run_multi_agent_surge
 
 
 def test_multi_agent_surge_20_patients_with_limited_staff_completes_encounters():

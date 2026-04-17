@@ -1,0 +1,48 @@
+protocol_id: dyspnea
+version: v1
+chief_complaint_aliases:
+  - shortness of breath
+  - dyspnea
+  - can't breathe
+  - 呼吸困难
+  - 喘不上气
+trigger_keywords:
+  - wheeze
+  - orthopnea
+  - hypoxia
+  - 胸闷气短
+red_flags:
+  - hypoxia
+  - altered_mental_status
+required_slots:
+  - duration
+  - breathing_difficulty
+  - fever
+questions:
+  - question_id: dy_duration
+    slot: duration
+    priority: 100
+    answer_type: text
+    zh: 呼吸困难是从什么时候开始的？
+    en: When did the breathing difficulty start?
+  - question_id: dy_breathing
+    slot: breathing_difficulty
+    priority: 95
+    answer_type: boolean
+    zh: 现在是否仍然明显喘不过气？
+    en: Are you still short of breath right now?
+  - question_id: dy_fever
+    slot: fever
+    priority: 85
+    answer_type: boolean
+    zh: 是否有发热或寒战？
+    en: Any fever or chills?
+urgency_rules:
+  - rule_id: dy_hypoxia
+    if_all: ["spo2<90"]
+    urgency_floor: RESUS
+    disposition_floor: ICU
+  - rule_id: dy_borderline_hypoxia
+    if_all: ["spo2<94", "complaint:dyspnea"]
+    urgency_floor: URGENT
+    disposition_floor: OBSERVE

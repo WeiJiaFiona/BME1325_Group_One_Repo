@@ -7,13 +7,19 @@
     <img src="{% static 'img/atlas.png' %}">
     Your environment server is up and running!
 </div>
-<button
-    id="view-data-btn"
-    onclick="window.location.href='/start_simulation';"
-    style="margin-top:20px; padding:15px 30px; font-size:18px; border-radius:10px;
-           background:#007BFF; color:white; border:none; cursor:pointer;">
-    Click Here to Start a Simulation
-  </button> 
+<div style="display:flex; gap:14px; margin-top:20px;">
+  <button
+      onclick="window.location.href='/start_simulation?ui_mode=auto';"
+      style="padding:15px 30px; font-size:18px; border-radius:10px;
+            background:#007BFF; color:white; border:none; cursor:pointer;">
+      Auto Mode
+    </button>
+  <button
+      onclick="window.location.href='/start_simulation?ui_mode=user';"
+      style="padding:15px 30px; font-size:18px; border-radius:10px;
+            background:#198754; color:white; border:none; cursor:pointer;">
+      User Mode
+    </button>
+</div>
 </div>
 {% endblock content %}
-

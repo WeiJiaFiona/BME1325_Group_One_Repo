@@ -1,7 +1,9 @@
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-FRONTEND_ROOT = PROJECT_ROOT / 'week6_interface' / 'frontend_server'
+_preferred_frontend = PROJECT_ROOT / "environment" / "frontend_server"
+_legacy_frontend = PROJECT_ROOT / "week6_interface" / "frontend_server"
+FRONTEND_ROOT = _preferred_frontend if _preferred_frontend.exists() else _legacy_frontend
 MAZE_ASSETS_ROOT = FRONTEND_ROOT / 'static_dirs' / 'assets'
 
 maze_assets_loc = str(MAZE_ASSETS_ROOT)

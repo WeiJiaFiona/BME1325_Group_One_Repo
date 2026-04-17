@@ -9,6 +9,9 @@
   <p style="font-size:1.2em; color:#555;">
     Configure the simulation parameters and start the simulation.
   </p>
+  <p style="font-size:1em; color:#333; margin-top:8px;">
+    Selected mode: <strong id="selected-mode">{{ ui_mode|default:"auto" }}</strong>
+  </p>
 </div>
 
 <!-- Configuration Panel -->
@@ -156,6 +159,8 @@ input, select {
 </style>
 
 <script>
+const uiMode = "{{ ui_mode|default:'auto' }}";
+
 async function saveSettings() {
   const payload = {
     fill_injuries: Number(document.getElementById("fill_injuries").value),
@@ -212,8 +217,7 @@ document.getElementById("start-btn").onclick = async function () {
 
     if (data.ok) {
       localStorage.setItem("curr_sim_pid", data.ok);
-
-      window.location.href = "/simulator_home";
+      window.location.href = `/simulator_home?ui_mode=${encodeURIComponent(uiMode)}`;
     } else {
       throw new Error(data.error);
     }

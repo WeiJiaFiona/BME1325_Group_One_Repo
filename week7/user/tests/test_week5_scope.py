@@ -1,5 +1,5 @@
-from week5_system.app.mode_user import start
-from week5_system.rule_core.state_machine import EncounterStateMachine
+from app_core.app.mode_user import start
+from app_core.rule_core.state_machine import EncounterStateMachine
 
 
 def test_chest_pain_diaphoresis():

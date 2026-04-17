@@ -1,4 +1,4 @@
-from week5_system.app.api_v1 import (
+from app_core.app.api_v1 import (
     ApiError,
     complete_handoff,
     queue_snapshot,

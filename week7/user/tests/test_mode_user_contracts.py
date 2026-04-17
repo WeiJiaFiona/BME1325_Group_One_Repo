@@ -1,6 +1,6 @@
 ﻿import pytest
 
-from week5_system.app.mode_user import start
+from app_core.app.mode_user import start
 
 
 @pytest.mark.parametrize(

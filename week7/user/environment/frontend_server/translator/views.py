@@ -21,7 +21,57 @@ import subprocess
 from django.http import JsonResponse
 import sys
 
-fs_temp_storage = "temp_storage"
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+FRONTEND_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
+from app_core.app.api_v1 import (
+    ApiError,
+    complete_handoff,
+    queue_snapshot,
+    reset_user_mode_session,
+    request_handoff,
+    start_encounter,
+    user_mode_chat_turn,
+    user_mode_session_status,
+)
+
+
+def _resolve_pointer_path(path: Path) -> Path:
+    if path.is_dir():
+        return path
+    if path.is_file():
+        try:
+            candidate = Path(path.read_text(encoding="utf-8").strip())
+            if candidate.exists():
+                return candidate
+        except Exception:
+            pass
+    return path
+
+
+STORAGE_ROOT = _resolve_pointer_path(FRONTEND_ROOT / "storage")
+TEMP_ROOT = _resolve_pointer_path(FRONTEND_ROOT / "temp_storage")
+fs_temp_storage = str(TEMP_ROOT)
+
+
+def _storage_path(*parts: str) -> str:
+    return str(STORAGE_ROOT.joinpath(*parts))
+
+
+def _temp_path(*parts: str) -> str:
+    return str(TEMP_ROOT.joinpath(*parts))
+
+
+def _resolve_backend_dir() -> Path:
+    env_backend = os.environ.get("EDSIM_BACKEND_DIR", "").strip()
+    if env_backend:
+        return Path(env_backend)
+    candidate = PROJECT_ROOT / "reverie" / "backend_server"
+    if candidate.exists():
+        return candidate
+    return candidate
 
 def landing(request): 
     context = {}
@@ -90,7 +140,7 @@ def demo(request, sim_code, step, play_speed="2"):
             sprite_files.append(x.split(".")[0])
             print(x.split(".")[0])
 
-    maze_meta = json.load(open(f'storage/{sim_code}/reverie/maze_visuals.json'))
+    maze_meta = json.load(open(_storage_path(sim_code, "reverie", "maze_visuals.json")))
 
     context = {"sim_code": sim_code,
                "step": step,
@@ -111,25 +161,42 @@ def UIST_Demo(request):
     return demo(request, "March20_the_ville_n25_UIST_RUN-step-1-141", 2160, play_speed="3")
 
 def home(request):
-    f_curr_sim_code = f"{fs_temp_storage}/curr_sim_code.json"
-    f_curr_step = f"{fs_temp_storage}/curr_step.json"
+    ui_mode = str(request.GET.get("ui_mode", "auto")).strip().lower()
+    if ui_mode not in {"auto", "user"}:
+        ui_mode = "auto"
 
-    # if not check_if_file_exists(f_curr_step): 
-    #     context = {}
-    #     template = "home/error_start_backend.html"
-    #     return render(request, template, context)
+    f_curr_sim_code = _temp_path("curr_sim_code.json")
+    f_curr_step = _temp_path("curr_step.json")
+
+    if (not check_if_file_exists(f_curr_sim_code)) or (not check_if_file_exists(f_curr_step)):
+        context = {"error": "Backend is not started yet. Please start simulation backend first."}
+        template = "home/error_start_backend.html"
+        return render(request, template, context)
 
     with open(f_curr_sim_code) as json_file:  
-        sim_code = json.load(json_file)["sim_code"]
+        sim_code = json.load(json_file).get("sim_code", "")
     
     with open(f_curr_step) as json_file:  
-        step = json.load(json_file)["step"]
+        step = json.load(json_file).get("step", 0)
+
+    if not sim_code:
+        context = {"error": "Invalid backend runtime state. Please restart backend."}
+        template = "home/error_start_backend.html"
+        return render(request, template, context)
 
     # os.remove(f_curr_step)
 
     persona_names = []
     persona_names_set = set()
-    for i in find_filenames(f"storage/{sim_code}/personas", ""): 
+    personas_dir = _storage_path(sim_code, "personas")
+    env_dir = _storage_path(sim_code, "environment")
+    maze_visuals_path = _storage_path(sim_code, "reverie", "maze_visuals.json")
+    if (not os.path.exists(personas_dir)) or (not os.path.exists(env_dir)) or (not os.path.exists(maze_visuals_path)):
+        context = {"error": f"Simulation data for `{sim_code}` is not ready yet. Start backend and try again."}
+        template = "home/error_start_backend.html"
+        return render(request, template, context)
+
+    for i in find_filenames(personas_dir, ""): 
         x = i.split("/")[-1].strip()
         if x[0] != ".": 
             persona_names += [[x, x.replace(" ", "_")]]
@@ -137,27 +204,49 @@ def home(request):
 
     persona_init_pos = []
     file_count = []
-    for i in find_filenames(f"storage/{sim_code}/environment", ".json"):
+    for i in find_filenames(env_dir, ".json"):
         x = i.split("/")[-1].strip()
         if x[0] != ".": 
             file_count += [int(x.split(".")[0])]
-    curr_json = f'storage/{sim_code}/environment/{str(max(file_count))}.json'
+    if not file_count:
+        context = {"error": f"No environment snapshots found for `{sim_code}` yet."}
+        template = "home/error_start_backend.html"
+        return render(request, template, context)
+    curr_json = _storage_path(sim_code, "environment", f"{str(max(file_count))}.json")
     with open(curr_json) as json_file:  
         persona_init_pos_dict = json.load(json_file)
         for key, val in persona_init_pos_dict.items(): 
             if key in persona_names_set: 
                 persona_init_pos += [[key, val["x"], val["y"]]]
                 
-    with open(f'storage/{sim_code}/reverie/maze_visuals.json') as json_file:  
+    with open(_storage_path(sim_code, "reverie", "maze_visuals.json")) as json_file:  
         maze_meta = json.load(json_file)
+
+    # Guard against stale curr_step values: frontend should start from an
+    # existing movement frame, otherwise update loop can wait forever.
+    movement_steps = []
+    movement_dir = _storage_path(sim_code, "movement")
+    if os.path.exists(movement_dir):
+        for i in find_filenames(movement_dir, ".json"):
+            x = i.split("/")[-1].strip()
+            if x and x[0] != ".":
+                try:
+                    movement_steps.append(int(x.split(".")[0]))
+                except Exception:
+                    pass
+    if movement_steps and step not in movement_steps:
+        step = max(movement_steps)
+    elif not movement_steps:
+        step = 0
 
 
     context = {"sim_code": sim_code,
-               "step": step, 
+               "step": step,
                "persona_names": persona_names,
                "persona_init_pos": persona_init_pos,
                "mode": "simulate",
-                "maze_size": [maze_meta["width"], maze_meta["height"]]}
+               "ui_mode": ui_mode,
+               "maze_size": [maze_meta["width"], maze_meta["height"]]}
     template = "home/home.html"
     return render(request, template, context)
 
@@ -167,7 +256,7 @@ def get_maze_visuals(request, sim_code, mode):
 
     # Source Maze Visual from different places depending on mode
     if(mode == "simulate"):
-        curr_json = f'storage/{sim_code}/reverie/maze_visuals.json'
+        curr_json = _storage_path(sim_code, "reverie", "maze_visuals.json")
         with open(curr_json, 'r') as json_file:  
             maze_visuals = json.load(json_file)
     else:
@@ -185,7 +274,7 @@ def replay(request, sim_code, step):
     persona_names = []
     persona_names_set = set()
 
-    meta_file = f"storage/{sim_code}/environment/0.json"
+    meta_file = _storage_path(sim_code, "environment", "0.json")
     with open(meta_file, 'r') as json_file: 
         meta = json.load(json_file)
 
@@ -195,11 +284,11 @@ def replay(request, sim_code, step):
 
     persona_init_pos = []
     file_count = []
-    for i in find_filenames(f"storage/{sim_code}/environment", ".json"):
+    for i in find_filenames(_storage_path(sim_code, "environment"), ".json"):
         x = i.split("/")[-1].strip()
         if x[0] != ".": 
             file_count += [int(x.split(".")[0])]
-    curr_json = f'storage/{sim_code}/environment/0.json'
+    curr_json = _storage_path(sim_code, "environment", "0.json")
     with open(curr_json) as json_file:  
         persona_init_pos_dict = json.load(json_file)
         for key, val in persona_init_pos_dict.items(): 
@@ -207,7 +296,7 @@ def replay(request, sim_code, step):
                 persona_init_pos += [[key, val["x"], val["y"]]]
 
 
-    maze_meta = json.load(open(f'storage/{sim_code}/reverie/maze_visuals.json'))
+    maze_meta = json.load(open(_storage_path(sim_code, "reverie", "maze_visuals.json")))
 
     context = {"sim_code": sim_code,
                "step": step, 
@@ -225,7 +314,7 @@ def replay_persona_state(request, sim_code, step, persona_name):
 
     persona_name_underscore = persona_name
     persona_name = persona_name_underscore.replace("_", " ")
-    memory = f"storage/{sim_code}/personas/{persona_name}/bootstrap_memory"
+    memory = _storage_path(sim_code, "personas", persona_name, "bootstrap_memory")
     if not os.path.exists(memory): 
         memory = f"compressed_storage/{sim_code}/personas/{persona_name}/bootstrap_memory"
 
@@ -305,7 +394,7 @@ def process_environment(request):
     sim_code = data["sim_code"]
     environment = data["environment"]
 
-    with open(f"storage/{sim_code}/environment/{step}.json", "w") as outfile:
+    with open(_storage_path(sim_code, "environment", f"{step}.json"), "w") as outfile:
         outfile.write(json.dumps(environment, indent=2))
         outfile.flush()
 
@@ -329,8 +418,8 @@ def update_environment(request):
     sim_code = data["sim_code"]
 
     response_data = {"<step>": -1}
-    if (check_if_file_exists(f"storage/{sim_code}/movement/{step}.json")):
-        with open(f"storage/{sim_code}/movement/{step}.json") as json_file: 
+    if (check_if_file_exists(_storage_path(sim_code, "movement", f"{step}.json"))):
+        with open(_storage_path(sim_code, "movement", f"{step}.json")) as json_file: 
             response_data = json.load(json_file)
             response_data["<step>"] = step
 
@@ -349,7 +438,7 @@ def path_tester_update(request):
     data = json.loads(request.body)
     camera = data["camera"]
 
-    with open(f"{fs_temp_storage}/path_tester_env.json", "w") as outfile:
+    with open(_temp_path("path_tester_env.json"), "w") as outfile:
         outfile.write(json.dumps(camera, indent=2))
 
     return HttpResponse("received")
@@ -385,7 +474,7 @@ def send_sim_command(request):
     except Exception as e:
         return JsonResponse({"ok": False, "error": str(e)}, status=400)
 
-    cmd_dir = Path(fs_temp_storage) / "commands"
+    cmd_dir = Path(_temp_path("commands"))
     cmd_dir.mkdir(parents=True, exist_ok=True)
 
     cmd_id = str(int(time.time() * 1000))
@@ -402,7 +491,7 @@ def get_sim_output(request):
     append new lines to a terminal UI.
     Optional query param: since_id to only get outputs after a given id.
     """
-    out_file = Path(fs_temp_storage) / "sim_output.json"
+    out_file = Path(_temp_path("sim_output.json"))
     if not out_file.exists():
         return JsonResponse({"outputs": []})
     try:
@@ -467,40 +556,23 @@ def start_backend(request):
 from django.conf import settings
 import psutil
 
-def _load_env_from_file(env_path):
-    env = {}
-    if not os.path.exists(env_path):
-        return env
-    with open(env_path, "r", encoding="utf-8") as f:
-        for raw_line in f:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, val = line.split("=", 1)
-            env[key.strip()] = val.strip().strip('"').strip("'")
-    return env
-
 @csrf_exempt
 def start_backend(request, origin, target):
     try:
-        project_root = Path(settings.BASE_DIR).parents[1]
-        backend_dir = project_root / "reverie" / "backend_server"
-        env_file = project_root / ".env"
+        backend_dir = _resolve_backend_dir()
 
         if not backend_dir.exists():
             return JsonResponse({
                 "ok": False,
                 "error": f"Backend directory not found: {backend_dir}"
             })
-        if check_if_file_exists(f"{fs_temp_storage}/curr_step.json"): 
-            os.remove(f"{fs_temp_storage}/curr_step.json")
+        if check_if_file_exists(_temp_path("curr_step.json")): 
+            os.remove(_temp_path("curr_step.json"))
 
 
         arguments = ["--frontend_ui", "yes", "--origin", origin, "--target", target]
         cmd = [sys.executable, "reverie.py"]
         cmd += arguments
-        backend_env = os.environ.copy()
-        backend_env.update(_load_env_from_file(str(env_file)))
         curr_sim = None
         if sys.platform == "win32":
             startup_info = subprocess.STARTUPINFO()
@@ -511,38 +583,27 @@ def start_backend(request, origin, target):
                 cmd,
                 cwd=str(backend_dir),
                 creationflags=subprocess.CREATE_NEW_CONSOLE,
-                startupinfo=startup_info,
-                env=backend_env
+                startupinfo=startup_info
             )
         elif sys.platform == "darwin":
             import shlex, json
 
             cmd_str = f"cd {shlex.quote(str(backend_dir))} && {shlex.quote(sys.executable)} reverie.py"
             applescript = f'tell application "Terminal" to do script {json.dumps(cmd_str)}'
-            curr_sim = subprocess.Popen(["osascript", "-e", applescript])
+            subprocess.Popen(["osascript", "-e", applescript])
 
 
         else:
             curr_sim = subprocess.Popen(
                 cmd,
-                cwd=str(backend_dir),
-                env=backend_env
+                cwd=str(backend_dir)
             )
-        wait_seconds = 0
-        while (not check_if_file_exists(f"{fs_temp_storage}/curr_step.json")):
+        start_wait = time.time()
+        while (not check_if_file_exists(_temp_path("curr_step.json"))):
+            if time.time() - start_wait > 20:
+                break
             time.sleep(0.5)
-            wait_seconds += 0.5
-            if curr_sim and curr_sim.poll() is not None:
-                return JsonResponse({
-                    "ok": False,
-                    "error": "Backend exited before initialization. Check OPENAI/EMBEDDINGS env settings."
-                }, status=500)
-            if wait_seconds >= 20:
-                return JsonResponse({
-                    "ok": False,
-                    "error": "Backend startup timeout (20s)."
-                }, status=504)
-        return JsonResponse({"ok": curr_sim.pid if curr_sim else True})
+        return JsonResponse({"ok": curr_sim.pid if curr_sim else True, "backend_dir": str(backend_dir)})
 
     except Exception as e:
         return JsonResponse({
@@ -552,7 +613,10 @@ def start_backend(request, origin, target):
 
 
 def start_page(request):
-    return render(request, "../templates/home/start_simulation.html")
+    ui_mode = str(request.GET.get("ui_mode", "auto")).strip().lower()
+    if ui_mode not in {"auto", "user"}:
+        ui_mode = "auto"
+    return render(request, "../templates/home/start_simulation.html", {"ui_mode": ui_mode})
 
 import csv
 import numpy as np
@@ -567,12 +631,12 @@ def live_dashboard_api(request):
     """Return the latest sim_status.json data for the live dashboard."""
     # Auto-detect active sim code
     try:
-        with open(f"{fs_temp_storage}/curr_sim_code.json") as f:
+        with open(_temp_path("curr_sim_code.json")) as f:
             sim_code = json.load(f).get("sim_code", "")
     except (FileNotFoundError, json.JSONDecodeError):
         return JsonResponse({"error": "No active simulation found."}, status=404)
 
-    status_path = f"storage/{sim_code}/sim_status.json"
+    status_path = _storage_path(sim_code, "sim_status.json")
     if not os.path.exists(status_path):
         return JsonResponse({"error": "Waiting for simulation data..."}, status=404)
 
@@ -584,7 +648,7 @@ def live_dashboard_api(request):
 
     # Optionally include completed patient stage times
     if request.GET.get("include_stages") == "true":
-        csv_path = f"storage/{sim_code}/reverie/completed_patient_stage_times.csv"
+        csv_path = _storage_path(sim_code, "reverie", "completed_patient_stage_times.csv")
         stages = []
         if os.path.exists(csv_path):
             try:
@@ -605,7 +669,7 @@ def live_dashboard_api(request):
 
 def data_api(request):
     sim_code = request.GET.get("sim_code")
-    csv_path = f"storage/{sim_code}/reverie/state_times.csv"
+    csv_path = _storage_path(sim_code, "reverie", "state_times.csv")
     df = pd.read_csv(csv_path)
 
     # Convert minutes → hours
@@ -669,7 +733,7 @@ def save_simulation_settings(request):
 
         sim_code = "ed_sim_n5"
 
-        meta_path = f"storage/{sim_code}/reverie/meta.json"
+        meta_path = _storage_path(sim_code, "reverie", "meta.json")
 
         if not os.path.exists(meta_path):
             return JsonResponse({"ok": False, "error": "meta.json not found"}, status=404)
@@ -719,7 +783,7 @@ def force_shutdown(request):
         if not pid:
             return JsonResponse({"ok": False, "error": "No PID provided"}, status=400)
 
-        file_path = Path(fs_temp_storage) / "sim_output.json"
+        file_path = Path(_temp_path("sim_output.json"))
         file_path.unlink(missing_ok=True)
 
         proc = psutil.Process(pid)
@@ -733,3 +797,128 @@ def force_shutdown(request):
 
     except Exception as e:
         return JsonResponse({"ok": False, "error": str(e)}, status=500)
+
+
+def _parse_json_body(request):
+    try:
+        return json.loads(request.body or b"{}")
+    except Exception as exc:
+        raise ApiError(f"Invalid JSON payload: {exc}", status_code=400, error_code="INVALID_SCHEMA")
+
+
+def _json_ok(data: dict, *, status: int = 200):
+    return JsonResponse({"ok": True, "data": data}, status=status)
+
+
+def _json_error(exc: ApiError):
+    return JsonResponse(
+        {
+            "ok": False,
+            "error": str(exc),
+            "error_code": getattr(exc, "error_code", "INVALID_REQUEST"),
+            "message": str(exc),
+            "field_errors": getattr(exc, "field_errors", None) or [],
+        },
+        status=getattr(exc, "status_code", 400),
+    )
+
+
+@csrf_exempt
+def api_mode_user_encounter_start(request):
+    if request.method != "POST":
+        return _json_error(ApiError("POST required", status_code=405, error_code="METHOD_NOT_ALLOWED"))
+
+    try:
+        payload = _parse_json_body(request)
+        result = start_encounter(payload)
+        return _json_ok(result)
+    except ApiError as exc:
+        return _json_error(exc)
+    except Exception as exc:
+        return _json_error(ApiError(str(exc), status_code=500, error_code="INTERNAL_ERROR"))
+
+
+@csrf_exempt
+def api_ed_handoff_request(request):
+    if request.method != "POST":
+        return _json_error(ApiError("POST required", status_code=405, error_code="METHOD_NOT_ALLOWED"))
+
+    try:
+        payload = _parse_json_body(request)
+        result = request_handoff(payload)
+        return _json_ok(result)
+    except ApiError as exc:
+        return _json_error(exc)
+    except Exception as exc:
+        return _json_error(ApiError(str(exc), status_code=500, error_code="INTERNAL_ERROR"))
+
+
+@csrf_exempt
+def api_ed_handoff_complete(request):
+    if request.method != "POST":
+        return _json_error(ApiError("POST required", status_code=405, error_code="METHOD_NOT_ALLOWED"))
+
+    try:
+        payload = _parse_json_body(request)
+        result = complete_handoff(payload)
+        return _json_ok(result)
+    except ApiError as exc:
+        return _json_error(exc)
+    except Exception as exc:
+        return _json_error(ApiError(str(exc), status_code=500, error_code="INTERNAL_ERROR"))
+
+
+def api_ed_queue_snapshot(request):
+    if request.method != "GET":
+        return _json_error(ApiError("GET required", status_code=405, error_code="METHOD_NOT_ALLOWED"))
+
+    try:
+        result = queue_snapshot()
+        return _json_ok(result)
+    except ApiError as exc:
+        return _json_error(exc)
+    except Exception as exc:
+        return _json_error(ApiError(str(exc), status_code=500, error_code="INTERNAL_ERROR"))
+
+
+@csrf_exempt
+def api_mode_user_chat_turn(request):
+    if request.method != "POST":
+        return _json_error(ApiError("POST required", status_code=405, error_code="METHOD_NOT_ALLOWED"))
+
+    try:
+        payload = _parse_json_body(request)
+        message = payload.get("message", "")
+        result = user_mode_chat_turn(message)
+        return _json_ok(result)
+    except ApiError as exc:
+        return _json_error(exc)
+    except Exception as exc:
+        return _json_error(ApiError(str(exc), status_code=500, error_code="INTERNAL_ERROR"))
+
+
+def api_mode_user_session_status(request):
+    if request.method != "GET":
+        return _json_error(ApiError("GET required", status_code=405, error_code="METHOD_NOT_ALLOWED"))
+
+    try:
+        result = user_mode_session_status()
+        return _json_ok(result)
+    except ApiError as exc:
+        return _json_error(exc)
+    except Exception as exc:
+        return _json_error(ApiError(str(exc), status_code=500, error_code="INTERNAL_ERROR"))
+
+
+@csrf_exempt
+def api_mode_user_session_reset(request):
+    if request.method != "POST":
+        return _json_error(ApiError("POST required", status_code=405, error_code="METHOD_NOT_ALLOWED"))
+
+    try:
+        result = reset_user_mode_session()
+        return _json_ok(result)
+    except ApiError as exc:
+        return _json_error(exc)
+    except Exception as exc:
+        return _json_error(ApiError(str(exc), status_code=500, error_code="INTERNAL_ERROR"))

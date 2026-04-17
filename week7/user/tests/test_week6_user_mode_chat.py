@@ -1,4 +1,4 @@
-from week5_system.app.api_v1 import (
+from app_core.app.api_v1 import (
     reset_runtime_state,
     user_mode_chat_turn,
     user_mode_session_status,
@@ -70,10 +70,19 @@ def test_user_mode_doctor_then_bed_nurse_completion_path():
     assert doctor_turn_1["session"]["phase"] in {"DOCTOR_CALLED", "BED_NURSE_FLOW", "DONE"}
 
     doctor_turn_2 = user_mode_chat_turn("No fever, breathing is okay.")
-    assert doctor_turn_2["session"]["phase"] in {"BED_NURSE_FLOW", "DONE"}
+    assert doctor_turn_2["session"]["phase"] in {"DOCTOR_CALLED", "BED_NURSE_FLOW", "DONE"}
+
+    if doctor_turn_2["session"]["phase"] == "DOCTOR_CALLED":
+        # New adaptive workflow may need one more clinically informative turn.
+        doctor_turn_3 = user_mode_chat_turn("Pain is getting worse.")
+        assert doctor_turn_3["session"]["phase"] in {"BED_NURSE_FLOW", "DONE", "DOCTOR_CALLED"}
+        if doctor_turn_3["session"]["phase"] == "DOCTOR_CALLED":
+            doctor_turn_4 = user_mode_chat_turn("No fainting.")
+            assert doctor_turn_4["session"]["phase"] in {"BED_NURSE_FLOW", "DONE"}
 
     # Bed nurse flow can auto-complete on status polling.
-    if doctor_turn_2["session"]["phase"] == "BED_NURSE_FLOW":
+    latest = user_mode_session_status()
+    if latest["session"]["phase"] == "BED_NURSE_FLOW":
         final_status = user_mode_session_status()
         assert final_status["session"]["phase"] == "DONE"
 

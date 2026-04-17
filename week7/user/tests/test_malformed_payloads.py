@@ -1,5 +1,5 @@
-﻿from week5_system.app.mode_user import start
-from week5_system.app.handoff import request, complete
+﻿from app_core.app.mode_user import start
+from app_core.app.handoff import request, complete
 
 
 def test_missing_chief_complaint():

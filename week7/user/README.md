@@ -1,129 +1,112 @@
-﻿# Week6 README
+# user_mode README
 
-本文件用于周内交接与协作，概述 Week6 已完成的工作、接口冻结范围、测试重点，以及常用 PowerShell 指令。
+This directory is the standalone Week6 `user_mode` package.
+It includes frontend + backend + RAG + LLM integration in one runnable tree.
 
----
+## 1. What Has Been Done
 
-## 1. 本周目标（Week6 User Mode + L1 API Freeze）
-- 冻结 4 个 L1 接口的输入/输出契约（schema）、错误码与事件追踪结构。
-- 完成 handoff 状态机与本地 mock server 以支持契约验证。
-- 建立 contract / malformed / state / integration / scenario 测试闭环。
+### 1.1 Directory Refactor (Standalone Structure)
+- Merged into one EDSim-style structure:
+  - `environment/frontend_server` (Django frontend)
+  - `reverie/backend_server` (simulation backend)
+  - `app_core` (core logic, triage, APIs, RAG, planning)
+  - `tests` (week6 test suite)
+- Removed runtime dependency on sibling week folders.
+- Renamed internal imports from `week5_system.*` to `app_core.*`.
 
----
+### 1.2 User Mode Flow Upgrades
+- Calling nurse + triage + doctor + bedside flow integrated.
+- Queue auto-progression enabled (no extra "hello" required to advance turn).
+- Shared memory is persisted in session and reused by agents.
+- Doctor supports one-question-per-turn behavior with anti-repeat guard.
 
-## 2. 已完成内容（可对外同步）
+### 1.3 RAG + LLM Integration
+- RAG pipeline wired into doctor loop:
+  - `retrieve_protocols -> build_evidence_package -> build_doctor_plan -> validate_plan`
+- Evidence is logged in `shared_memory.doctor_assessment.planner_trace`.
+- Local case bank retrieval included (`case_bank` evidence refs).
+- Protocol coverage expanded:
+  - `chest_pain`, `dyspnea`, `stroke`, `sepsis`, `trauma`
+  - `labor`, `abdominal_pain`, `anaphylaxis`, `headache`
+- LLM adapter hardened:
+  - retries without environment proxies when proxy TLS path fails.
 
-### 2.1 L1 接口冻结
-- `/mode/user/encounter/start`
-  - 最小字段集，必填 `chief_complaint` + `vitals.spo2` + `vitals.sbp`。
-  - 响应包含 `patient_id / triage / final_state / state_trace / event_trace`。
-  - event_trace 为全量轨迹。
+### 1.4 Clinical Behavior Improvements
+- Doctor can answer patient imaging-intent questions (CT/MRI/X-ray/US guidance) before continuing triage questioning.
+- Doctor disposition message now includes preliminary clinical impression + key findings + target destination.
+- Bedside nurse now reports explicit bed number.
 
-- `/ed/handoff/request`
-  - 固定字段：`patient_id, acuity_ad, zone, stability, required_unit, clinical_summary, pending_tasks`。
-  - 响应：`handoff_ticket_id, status, reason, event_trace`。
-  - event_trace 仅 `handoff_requested`。
+### 1.5 Triage Improvements
+- Chinese/English high-risk keywords added in triage policy.
+- CTAS can now realistically trigger A/B/C/D, including CTAS 1 in critical cases.
 
-- `/ed/handoff/complete`
-  - 固定字段：`handoff_ticket_id, receiver_system, accepted_at, receiver_bed`。
-  - 响应：`final_disposition_state, transfer_latency_seconds, event_trace`。
-  - event_trace 仅 `handoff_completed`。
+### 1.6 Test Status
+- Current regression set:
+  - `tests/test_week6_stage2_rag.py`
+  - `tests/test_week6_user_mode_chat.py`
+  - `tests/test_week6_user_mode_natural.py`
+  - `tests/test_week6_l1_api.py`
+- Last verified result: **31 passed**.
 
-- `/ed/queue/snapshot`
-  - 固定统计结构：`queues + occupancy + snapshot_time + trace_id`。
-  - 不强制返回 event_trace，避免过度工程化。
+## 2. What Still Needs To Be Done
 
-### 2.2 统一错误响应
-- 结构：`{error_code, message, field_errors}`。
-- 固定 error_code：
-  - `INVALID_SCHEMA`
-  - `MISSING_FIELD`
-  - `INVALID_TYPE`
-  - `NOT_FOUND`
-  - `INVALID_STATE`
+### 2.1 State-Machine Hook Compatibility Bug
+- Known issue in direct `start_encounter(...)` path for extreme acuity:
+  - `Hook deterioration cannot be applied from UNDER_EVALUATION`
+- Needs rule-core state machine transition fix for hook ordering / allowed states.
 
-### 2.3 Handoff 状态机
-- 状态：`INIT -> REQUESTED -> COMPLETED / REJECTED / TIMEOUT`
-- 超时规则：`accepted_at - requested_at > 1800s`。
-- 非法转移返回 `INVALID_STATE`。
+### 2.2 Doctor Clinical Realism (Next Level)
+- Current doctor is hybrid (rules + RAG + LLM), but still constrained by slot-plan.
+- Next steps:
+  - stronger intent handling (`patient asks advice`, `patient asks plan`, `patient asks why`)
+  - richer dynamic reasoning across longitudinal context
+  - better multilingual response consistency
 
-### 2.4 ICU/Ward Mock Server（HTTP）
-- 本地 mock server，端点：
-  - `POST /handoff/request`
-  - `POST /handoff/complete`
-- 供测试使用，确保与 “mock server” 描述一致。
+### 2.3 Disposition Granularity
+- Add richer targets and pathways:
+  - e.g., `OBS`, specialty consult routing, discharge instructions quality.
+- Improve explicit diagnosis confidence statement and uncertainty handling.
 
-### 2.5 merged_v1 交接补充（当前进度）
-- 交接文档：`week6/merged_v1_illstration.md`
-- User Mode 前端：已新增独立 `/mode/user` 页面与左右栏 UI（聊天区 + 状态卡片）
-- API 自检：已在本地用 Python 直调 `/mode/user/*` 与 `/ed/*` 通过
-- Auto Mode：仍因缺少 `storage/ed_sim_n5/reverie/meta.json` 无法启动
+### 2.4 Data/Knowledge Expansion
+- Expand local case bank coverage and quality.
+- Add protocol versioning and validation checks.
+- Add curated ED knowledge chunks for more robust RAG retrieval quality.
 
----
+### 2.5 Frontend/UX Completion
+- Improve patient-facing explanation panels:
+  - current risk level, rationale, next step transparency.
+- Better visualization of multi-patient concurrent movement in user mode view.
 
-## 3. 目录结构（本周相关）
-```
-week6/
-  week5_system/
-    app/                 # L1 接口逻辑层与 schema
-    queue_state_primitives/  # queue snapshot
-    rule_core/           # Week5 规则核心复用
-  tests/                 # Week6 新增测试
-  week6_workflow.md      # 冻结版方案文档
-```
+## 3. How To Run
 
----
-
-## 4. 常用 PowerShell 指令
-
-### 进入 Week6 并运行测试
-```powershell
-cd D:\projects\BME1325Spring2026\BME1325_Group_One_Repo\week6
-python -m pytest -q
-```
-
-### 指定 mock server（环境变量）
-```powershell
-$env:HANDOFF_MOCK_URL = "http://127.0.0.1:8001/handoff/request"
+### 3.1 Backend + Frontend (Django)
+```bash
+cd /home/jiawei2022/BME1325/week6/week6/user_mode/environment/frontend_server
+python manage.py runserver 0.0.0.0:8010
 ```
 
----
+Open:
+- `http://127.0.0.1:8010/`
 
-## 5. 测试重点（What we validate）
+### 3.2 Run Tests
+```bash
+cd /home/jiawei2022/BME1325/week6/week6/user_mode
+pytest -q tests/test_week6_stage2_rag.py tests/test_week6_user_mode_chat.py tests/test_week6_user_mode_natural.py tests/test_week6_l1_api.py
+```
 
-### Contract Tests
-- 4 个接口输入最小字段集能通过
-- 响应字段完整且稳定
+## 4. Key Files
 
-### Malformed Payload Tests
-- 缺字段 -> `MISSING_FIELD`
-- 类型错误 -> `INVALID_TYPE`
-- payload 非对象 -> `INVALID_SCHEMA`
+- Core API orchestration:
+  - `app_core/app/api_v1.py`
+- LLM adapter:
+  - `app_core/app/llm_adapter.py`
+- RAG retriever + evidence:
+  - `app_core/app/rag/protocol_retriever.py`
+  - `app_core/app/rag/case_retriever.py`
+  - `app_core/app/rag/evidence_builder.py`
+- Doctor planner/validator:
+  - `app_core/app/planning/doctor_planner.py`
+  - `app_core/app/planning/plan_validator.py`
+- Triage rules:
+  - `app_core/rule_core/triage_policy.py`
 
-### State Tests
-- handoff_ticket_id 不存在 -> `NOT_FOUND`
-- 非法状态转移 -> `INVALID_STATE`
-
-### Integration Tests
-- mock server request -> complete 全链路
-- timeout case（accepted_at 超阈值）
-- queue snapshot 返回结构 + trace_id
-
-### Scenario Tests
-- walk-in chest pain
-- ambulance trauma
-- dyspnea / fever
-
----
-
-## 6. 说明与注意事项
-- 本周接口冻结为“函数级入口”，未绑定真实 HTTP 路由。
-- 如果需要前端/外部直接访问，需要在上层 FastAPI 中增加路由绑定。
-- 所有时间单位统一为 seconds。
-- `receiver_bed` 为空代表拒绝，非空代表成功。
-
----
-
-## 7. 参考文档
-- `week6/week6_workflow.md`
-- `week5/edmas/EDMAS_week5_12_workflow.md`

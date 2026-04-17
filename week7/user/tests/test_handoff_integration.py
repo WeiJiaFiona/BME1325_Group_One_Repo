@@ -1,8 +1,8 @@
 ﻿import os
 from datetime import datetime, timedelta
 
-from week5_system.app.handoff import HANDOFF_TIMEOUT_SECONDS, complete, request, reset_store
-from week5_system.app.mock_server import start_mock_server, stop_mock_server
+from app_core.app.handoff import HANDOFF_TIMEOUT_SECONDS, complete, request, reset_store
+from app_core.app.mock_server import start_mock_server, stop_mock_server
 
 
 def _base_request():

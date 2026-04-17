@@ -42,6 +42,13 @@ urlpatterns = [
     url(r'^live_dashboard$', translator_views.live_dashboard_page, name='live_dashboard_page'),
     url(r'^api/live_dashboard/$', translator_views.live_dashboard_api, name='live_dashboard_api'),
     url(r'^api/state_times/$', translator_views.data_api, name='data_api'),
+    url(r'^mode/user/encounter/start$', translator_views.api_mode_user_encounter_start, name='api_mode_user_encounter_start'),
+    url(r'^mode/user/chat/turn$', translator_views.api_mode_user_chat_turn, name='api_mode_user_chat_turn'),
+    url(r'^mode/user/session/status$', translator_views.api_mode_user_session_status, name='api_mode_user_session_status'),
+    url(r'^mode/user/session/reset$', translator_views.api_mode_user_session_reset, name='api_mode_user_session_reset'),
+    url(r'^ed/handoff/request$', translator_views.api_ed_handoff_request, name='api_ed_handoff_request'),
+    url(r'^ed/handoff/complete$', translator_views.api_ed_handoff_complete, name='api_ed_handoff_complete'),
+    url(r'^ed/queue/snapshot$', translator_views.api_ed_queue_snapshot, name='api_ed_queue_snapshot'),
     url('character_image', translator_views.get_image_png, name='get_image_png'),
     path('admin/', admin.site.urls),
 ]

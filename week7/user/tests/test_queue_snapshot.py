@@ -1,4 +1,4 @@
-﻿from week5_system.queue_state_primitives.snapshot import queue_snapshot
+﻿from app_core.queue_state_primitives.snapshot import queue_snapshot
 
 
 class DummyMaze:

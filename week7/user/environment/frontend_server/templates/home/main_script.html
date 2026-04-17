@@ -101,9 +101,59 @@
 
 	var personas = {};
 	var pronunciatios = {};
+	var nameBadges = {};
+	var figureBadges = {};
 	let anims_direction;
 	let pre_anims_direction;
 	let pre_anims_direction_dict = {};
+	let userGuideGraphics = null;
+	let modeLabelGraphics = null;
+	let userGuideLabel = null;
+	const ROLE_STYLE = {
+	  doctor: { tint: 0x2f6fed, badge: "#dce8ff", tag: "DR" },
+	  triage_nurse: { tint: 0xf39c12, badge: "#ffe9c9", tag: "TN" },
+	  calling_nurse: { tint: 0x7b8cff, badge: "#e5e8ff", tag: "CN" },
+	  bed_nurse: { tint: 0x27ae60, badge: "#d9f5e6", tag: "BN" },
+	  patient: { tint: 0x7f8c8d, badge: "#eceff1", tag: "PT" },
+	  other: { tint: 0x95a5a6, badge: "#f0f0f0", tag: "OT" },
+	};
+	const ROLE_FIGURE_KEY = {
+	  doctor: "role_doctor",
+	  triage_nurse: "role_triage_nurse",
+	  calling_nurse: "role_calling_nurse",
+	  bed_nurse: "role_bed_nurse",
+	  patient: "role_patient",
+	  other: "role_other_patient",
+	};
+
+	function roleForName(personaName) {
+	  const n = (personaName || "").toLowerCase();
+	  if (n.includes("calling")) return ROLE_STYLE.calling_nurse;
+	  if (n.includes("triage")) return ROLE_STYLE.triage_nurse;
+	  if (n.includes("doctor")) return ROLE_STYLE.doctor;
+	  if (n.includes("bedside") || n.includes("bed nurse")) return ROLE_STYLE.bed_nurse;
+	  if (n.includes("patient")) return ROLE_STYLE.patient;
+	  return ROLE_STYLE.other;
+	}
+
+	function roleForZone(zoneName) {
+	  const z = (zoneName || "").toLowerCase();
+	  if (z.includes("vitals") || z.includes("calling") || z.includes("queue")) return "calling_nurse";
+	  if (z.includes("triage")) return "triage_nurse";
+	  if (z.includes("doctor")) return "doctor";
+	  if (z.includes("bed") || z.includes("transfer")) return "bed_nurse";
+	  return "";
+	}
+
+	function roleKeyForName(personaName) {
+	  const n = (personaName || "").toLowerCase();
+	  if (n.includes("calling")) return "calling_nurse";
+	  if (n.includes("triage")) return "triage_nurse";
+	  if (n.includes("doctor")) return "doctor";
+	  if (n.includes("bedside") || n.includes("bed nurse")) return "bed_nurse";
+	  if (n.includes("patient")) return "patient";
+	  return "other";
+	}
 
 	let curr_maze = "ed_map";
 
@@ -179,6 +229,12 @@
 	  this.load.atlas("atlas", 
 	                  "https://mikewesthad.github.io/phaser-3-tilemap-blog-posts/post-1/assets/atlas/atlas.png", 
 	                  "https://mikewesthad.github.io/phaser-3-tilemap-blog-posts/post-1/assets/atlas/atlas.json");
+	  this.load.image("role_doctor", "{% static 'assets/characters/profile/Doctor_1.png' %}");
+	  this.load.image("role_triage_nurse", "{% static 'assets/characters/profile/Triage_Nurse_1.png' %}");
+	  this.load.image("role_calling_nurse", "{% static 'assets/characters/profile/Triage_Nurse_1.png' %}");
+	  this.load.image("role_bed_nurse", "{% static 'assets/characters/profile/Bedside_Nurse_1.png' %}");
+	  this.load.image("role_patient", "{% static 'assets/characters/profile/Patient_1.png' %}");
+	  this.load.image("role_other_patient", "{% static 'assets/characters/profile/Patient_2.png' %}");
 	}
 
 	function create() {  
@@ -256,28 +312,55 @@
 	  // *** ZOOM CAMERA ***
 	  // Set the zoom level of the camera
 	  camera.setZoom(2); // Adjust the zoom level as needed
+	  userGuideGraphics = this.add.graphics().setDepth(8);
+	  modeLabelGraphics = this.add.graphics().setDepth(7);
+	  userGuideLabel = this.add.text(0, 0, "", {
+	    font: "10px monospace",
+	    fill: "#111111",
+	    backgroundColor: "#ffd400",
+	    padding: {x: 4, y: 1},
+	  }).setDepth(9).setVisible(false);
 	  // *** SET UP PERSONAS *** 
 	  // We start by creating the game sprite objects. 
 	  for (let i=0; i<Object.keys(spawn_tile_loc).length; i++) { 
 	    let persona_name = Object.keys(spawn_tile_loc)[i];
+	    let role = roleForName(persona_name);
 	    let start_pos = [spawn_tile_loc[persona_name][0] * tile_width + tile_width / 2, 
 	                     spawn_tile_loc[persona_name][1] * tile_width + tile_width];
 	    let new_sprite = this.physics.add
 	                         .sprite(start_pos[0], start_pos[1], "atlas", "misa-front")
 	                         .setSize(30, 40)
 	                         .setOffset(0, 32); // DEBUG 1 --- I added 32 offset on Dec 29. 
+		new_sprite.setTint(role.tint);
 	    // Here, we are creating the persona and its pronunciatio sprites.
 	    personas[persona_name] = new_sprite;
 	    pronunciatios[persona_name] = this.add.text(
 	                                   new_sprite.body.x - 6, 
 	                                   new_sprite.body.y - 42 - 32, // DEBUG 1 --- I added 32 offset on Dec 29. 
-	                                   "⏳", {
+	                                   role.tag + ": ⏳", {
 	                                   font: "28px monospace", 
 	                                   fill: "#000000", 
 	                                   padding: { x: 8, y: 8}, 
-	                                   backgroundColor: "#ffffff",
+	                                   backgroundColor: role.badge,
 	                                   border:"solid",
 	                                   borderRadius:"10px"}).setDepth(3);
+		nameBadges[persona_name] = this.add.text(
+		                           new_sprite.body.x - 8,
+		                           new_sprite.body.y - 64 - 32,
+		                           role.tag,
+		                           {
+		                             font: "12px monospace",
+		                             fill: "#111111",
+		                             backgroundColor: "#ffffff",
+		                             padding: {x: 4, y: 1},
+		                           }).setDepth(6);
+		const roleKey = roleKeyForName(persona_name);
+		const figureKey = ROLE_FIGURE_KEY[roleKey] || ROLE_FIGURE_KEY.other;
+		figureBadges[persona_name] = this.add.image(
+			new_sprite.body.x + 14,
+			new_sprite.body.y - 52,
+			figureKey
+		).setDepth(7).setScale(0.15);
 
 		addNewPersonaSection(persona_name, persona_name.replaceAll(" ", "_"));
 	  }
@@ -431,24 +514,43 @@
 			if(!Object.keys(personas).includes(symmetric_difference[j])){
 
 				let persona_name = symmetric_difference[j];
+				let role = roleForName(persona_name);
 				let start_pos = [execute_movement["persona"][persona_name]["movement"][0] * tile_width + tile_width / 2, 
 								execute_movement["persona"][persona_name]["movement"][1] * tile_width + tile_width];
 				let new_sprite = this.physics.add
 				.sprite(start_pos[0], start_pos[1], "atlas", "misa-front")
 				.setSize(30, 40)
 				.setOffset(0, 32); // DEBUG 1 --- I added 32 offset on Dec 29. 
+				new_sprite.setTint(role.tint);
 				// Here, we are creating the persona and its pronunciatio sprites.
 				personas[persona_name] = new_sprite;
 				pronunciatios[persona_name] = this.add.text(
 												new_sprite.body.x - 6, 
 												new_sprite.body.y - 42 - 32, // DEBUG 1 --- I added 32 offset on Dec 29. 
-												"⏳", {
+												role.tag + ": ⏳", {
 												font: "28px monospace", 
 												fill: "#000000", 
 												padding: { x: 8, y: 8}, 
-												backgroundColor: "#ffffff",
+												backgroundColor: role.badge,
 												border:"solid",
 												borderRadius:"10px"}).setDepth(3);
+				nameBadges[persona_name] = this.add.text(
+				                           new_sprite.body.x - 8,
+				                           new_sprite.body.y - 64 - 32,
+				                           role.tag,
+				                           {
+				                             font: "12px monospace",
+				                             fill: "#111111",
+				                             backgroundColor: "#ffffff",
+				                             padding: {x: 4, y: 1},
+				                           }).setDepth(6);
+				const roleKey = roleKeyForName(persona_name);
+				const figureKey = ROLE_FIGURE_KEY[roleKey] || ROLE_FIGURE_KEY.other;
+				figureBadges[persona_name] = this.add.image(
+					new_sprite.body.x + 14,
+					new_sprite.body.y - 52,
+					figureKey
+				).setDepth(7).setScale(0.15);
 				console.log("f:", Object.keys(personas));
 
 				addNewPersonaSection(persona_name, persona_name.replaceAll(" ", "_"));
@@ -458,6 +560,14 @@
 				const curr_persona_name = symmetric_difference[j];
 				personas[curr_persona_name].destroy();
 				pronunciatios[curr_persona_name].destroy();
+				if(nameBadges[curr_persona_name]){
+					nameBadges[curr_persona_name].destroy();
+					delete nameBadges[curr_persona_name];
+				}
+				if(figureBadges[curr_persona_name]){
+					figureBadges[curr_persona_name].destroy();
+					delete figureBadges[curr_persona_name];
+				}
 				delete personas[curr_persona_name];
 				console.log("After deletion", Object.keys(personas));
 			}
@@ -495,8 +605,9 @@
 			let last = parts.length > 0 ? parts.pop() : '';
 
 			let initials = (first + last).toUpperCase();
+			let role = roleForName(curr_persona_name);
 
-			pronunciatios[curr_persona_name].setText(initials + ": " + pronunciatio_content);
+			pronunciatios[curr_persona_name].setText(role.tag + " " + initials + ": " + pronunciatio_content);
 	      }
 
 	      if (execute_count > 0) {
@@ -526,6 +637,14 @@
 
 	        curr_pronunciatio.x = curr_persona.body.x - 6; 
           curr_pronunciatio.y = curr_persona.body.y - 42 - 32; // DEBUG 1 --- I added 32 offset on Dec 29. 
+		  if (nameBadges[curr_persona_name]) {
+			nameBadges[curr_persona_name].x = curr_persona.body.x - 8;
+			nameBadges[curr_persona_name].y = curr_persona.body.y - 64 - 32;
+		  }
+		  if (figureBadges[curr_persona_name]) {
+			figureBadges[curr_persona_name].x = curr_persona.body.x + 14;
+			figureBadges[curr_persona_name].y = curr_persona.body.y - 52;
+		  }
 
           if (anims_direction == "l") {
 			      curr_persona.anims.play("misa-left-walk", true);
@@ -593,7 +712,46 @@
 	    }
 
 	    execute_count = execute_count - 1;
+		drawUserModeGuidance(this);
 	  }
+	}
+
+	function drawUserModeGuidance(scene) {
+	  if (!userGuideGraphics) return;
+	  userGuideGraphics.clear();
+	  if (userGuideLabel) userGuideLabel.setVisible(false);
+	  const state = window.USER_MODE_STATE || {};
+	  const patientId = state.patientId || "";
+	  const zone = state.targetZone || "";
+	  if (!patientId || !personas[patientId]) return;
+
+	  const patientSprite = personas[patientId];
+	  const px = patientSprite.body.x + 15;
+	  const py = patientSprite.body.y + 20;
+	  userGuideGraphics.lineStyle(3, 0xffd400, 0.95);
+	  userGuideGraphics.strokeCircle(px, py, 24);
+	  if (userGuideLabel) {
+		userGuideLabel.setPosition(px - 14, py - 44);
+		userGuideLabel.setText("YOU");
+		userGuideLabel.setVisible(true);
+	  }
+
+	  const targetRole = roleForZone(zone);
+	  if (!targetRole) return;
+
+	  const candidates = Object.keys(personas).filter((n) => roleKeyForName(n) === targetRole);
+	  if (!candidates.length) return;
+	  const targetName = candidates[0];
+	  const target = personas[targetName];
+	  const tx = target.body.x + 15;
+	  const ty = target.body.y + 20;
+	  userGuideGraphics.lineStyle(2, 0xff5a36, 0.85);
+	  userGuideGraphics.strokeCircle(tx, ty, 20);
+	  userGuideGraphics.lineStyle(2, 0x23a559, 0.85);
+	  userGuideGraphics.beginPath();
+	  userGuideGraphics.moveTo(px, py);
+	  userGuideGraphics.lineTo(tx, ty);
+	  userGuideGraphics.strokePath();
 	}
 
 	// Adds a new persona section when added

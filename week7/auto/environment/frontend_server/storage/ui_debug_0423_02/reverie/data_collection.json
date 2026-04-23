@@ -1,0 +1,388 @@
+{
+  "Patient": {
+    "Patient 1": {
+      "ICD-10-CA_code": null,
+      "CTAS_score": null,
+      "injuries_zone": null,
+      "time_spent_area": {
+        "waiting room": 98.0,
+        "hallway": 1.0,
+        "triage room": 1.0
+      },
+      "time_spent_state": {
+        "TRIAGE": 3.0,
+        "WAITING_FOR_NURSE": 97.0
+      },
+      "tiles_traveled": 0,
+      "travel_time_minutes": 0,
+      "travel_time_state": {},
+      "travel_time_area": {},
+      "exempt_from_data_collection": false,
+      "left_department_by_choice": {
+        "occurred": false
+      },
+      "lingered_after_discharge": {
+        "occurred": false
+      },
+      "admitted_to_hospital": {
+        "occurred": false
+      },
+      "boarding_timeout_event": {
+        "occurred": false
+      },
+      "testing_kind": null,
+      "stage1_minutes": 278.8,
+      "stage2_minutes": 114.7,
+      "stage3_minutes": 0.0
+    },
+    "Patient 2": {
+      "ICD-10-CA_code": null,
+      "CTAS_score": null,
+      "injuries_zone": null,
+      "time_spent_area": {
+        "waiting room": 97.0,
+        "hallway": 2.0,
+        "triage room": 1.0
+      },
+      "time_spent_state": {
+        "WAITING_FOR_TRIAGE": 3.0,
+        "TRIAGE": 3.0,
+        "WAITING_FOR_NURSE": 94.0
+      },
+      "tiles_traveled": 0,
+      "travel_time_minutes": 0,
+      "travel_time_state": {},
+      "travel_time_area": {},
+      "exempt_from_data_collection": false,
+      "left_department_by_choice": {
+        "occurred": false
+      },
+      "lingered_after_discharge": {
+        "occurred": false
+      },
+      "admitted_to_hospital": {
+        "occurred": false
+      },
+      "boarding_timeout_event": {
+        "occurred": false
+      },
+      "testing_kind": null,
+      "stage1_minutes": 921.0,
+      "stage2_minutes": 66.4,
+      "stage3_minutes": 0.0
+    },
+    "Patient 3": {
+      "ICD-10-CA_code": "R55",
+      "CTAS_score": 2,
+      "injuries_zone": "minor injuries zone",
+      "time_spent_area": {
+        "minor injuries zone": 100.0
+      },
+      "time_spent_state": {
+        "WAITING_FOR_FIRST_ASSESSMENT": 100.0
+      },
+      "tiles_traveled": 0,
+      "travel_time_minutes": 0,
+      "travel_time_state": {},
+      "travel_time_area": {},
+      "exempt_from_data_collection": true,
+      "left_department_by_choice": {
+        "occurred": false
+      },
+      "lingered_after_discharge": {
+        "occurred": false
+      },
+      "admitted_to_hospital": {
+        "occurred": false
+      },
+      "boarding_timeout_event": {
+        "occurred": false
+      },
+      "testing_kind": null,
+      "stage1_minutes": 159.8,
+      "stage2_minutes": 197.6,
+      "stage3_minutes": 0.0
+    },
+    "Patient 4": {
+      "ICD-10-CA_code": "R07.4",
+      "CTAS_score": 2,
+      "injuries_zone": "minor injuries zone",
+      "time_spent_area": {
+        "minor injuries zone": 55.0,
+        "diagnostic room": 45.0
+      },
+      "time_spent_state": {
+        "WAITING_FOR_FIRST_ASSESSMENT": 15.0,
+        "WAITING_FOR_TEST": 1.0,
+        "GOING_FOR_TEST": 45.0,
+        "WAITING_FOR_RESULT": 39.0
+      },
+      "tiles_traveled": 0,
+      "travel_time_minutes": 0,
+      "travel_time_state": {},
+      "travel_time_area": {},
+      "exempt_from_data_collection": true,
+      "left_department_by_choice": {
+        "occurred": false
+      },
+      "lingered_after_discharge": {
+        "occurred": false
+      },
+      "admitted_to_hospital": {
+        "occurred": false
+      },
+      "boarding_timeout_event": {
+        "occurred": false
+      },
+      "testing_kind": "imaging",
+      "stage1_minutes": 13.5,
+      "stage2_minutes": 84.8,
+      "stage3_minutes": 754.9
+    },
+    "Patient 5": {
+      "ICD-10-CA_code": "S06.0",
+      "CTAS_score": 3,
+      "injuries_zone": "minor injuries zone",
+      "time_spent_area": {
+        "minor injuries zone": 36.0,
+        "exit": 1.0
+      },
+      "time_spent_state": {
+        "WAITING_FOR_FIRST_ASSESSMENT": 35.0,
+        "LEAVING": 2.0
+      },
+      "tiles_traveled": 0,
+      "travel_time_minutes": 0,
+      "travel_time_state": {},
+      "travel_time_area": {},
+      "exempt_from_data_collection": true,
+      "left_department_by_choice": {
+        "occurred": false
+      },
+      "lingered_after_discharge": {
+        "occurred": false
+      },
+      "admitted_to_hospital": {
+        "occurred": false
+      },
+      "boarding_timeout_event": {
+        "occurred": false
+      },
+      "testing_kind": null,
+      "stage1_minutes": 88.5,
+      "stage2_minutes": 52.1,
+      "stage3_minutes": 0.0
+    },
+    "Patient 6": {
+      "ICD-10-CA_code": "R55",
+      "CTAS_score": 2,
+      "injuries_zone": "minor injuries zone",
+      "time_spent_area": {
+        "minor injuries zone": 100.0
+      },
+      "time_spent_state": {
+        "WAITING_FOR_FIRST_ASSESSMENT": 100.0
+      },
+      "tiles_traveled": 0,
+      "travel_time_minutes": 0,
+      "travel_time_state": {},
+      "travel_time_area": {},
+      "exempt_from_data_collection": true,
+      "left_department_by_choice": {
+        "occurred": false
+      },
+      "lingered_after_discharge": {
+        "occurred": false
+      },
+      "admitted_to_hospital": {
+        "occurred": false
+      },
+      "boarding_timeout_event": {
+        "occurred": false
+      },
+      "testing_kind": null,
+      "stage1_minutes": 112.6,
+      "stage2_minutes": 289.1,
+      "stage3_minutes": 0.0
+    },
+    "Patient 7": {
+      "ICD-10-CA_code": "R07.4",
+      "CTAS_score": 2,
+      "injuries_zone": "major injuries zone",
+      "time_spent_area": {
+        "major injuries zone": 74.0,
+        "diagnostic room": 26.0
+      },
+      "time_spent_state": {
+        "WAITING_FOR_FIRST_ASSESSMENT": 73.0,
+        "WAITING_FOR_TEST": 1.0,
+        "GOING_FOR_TEST": 26.0
+      },
+      "tiles_traveled": 0,
+      "travel_time_minutes": 0,
+      "travel_time_state": {},
+      "travel_time_area": {},
+      "exempt_from_data_collection": true,
+      "left_department_by_choice": {
+        "occurred": false
+      },
+      "lingered_after_discharge": {
+        "occurred": false
+      },
+      "admitted_to_hospital": {
+        "occurred": false
+      },
+      "boarding_timeout_event": {
+        "occurred": false
+      },
+      "testing_kind": "imaging",
+      "stage1_minutes": 71.9,
+      "stage2_minutes": 50.2,
+      "stage3_minutes": 0.0
+    },
+    "Patient 8": {
+      "ICD-10-CA_code": "R07.4",
+      "CTAS_score": 2,
+      "injuries_zone": "major injuries zone",
+      "time_spent_area": {
+        "major injuries zone": 95.0,
+        "diagnostic room": 5.0
+      },
+      "time_spent_state": {
+        "WAITING_FOR_FIRST_ASSESSMENT": 94.0,
+        "WAITING_FOR_TEST": 1.0,
+        "GOING_FOR_TEST": 5.0
+      },
+      "tiles_traveled": 0,
+      "travel_time_minutes": 0,
+      "travel_time_state": {},
+      "travel_time_area": {},
+      "exempt_from_data_collection": true,
+      "left_department_by_choice": {
+        "occurred": false
+      },
+      "lingered_after_discharge": {
+        "occurred": false
+      },
+      "admitted_to_hospital": {
+        "occurred": false
+      },
+      "boarding_timeout_event": {
+        "occurred": false
+      },
+      "testing_kind": "imaging",
+      "stage1_minutes": 84.0,
+      "stage2_minutes": 107.2,
+      "stage3_minutes": 0.0
+    },
+    "Patient 9": {
+      "ICD-10-CA_code": "S06.0",
+      "CTAS_score": 3,
+      "injuries_zone": "major injuries zone",
+      "time_spent_area": {
+        "major injuries zone": 64.0,
+        "exit": 1.0
+      },
+      "time_spent_state": {
+        "WAITING_FOR_FIRST_ASSESSMENT": 63.0,
+        "LEAVING": 2.0
+      },
+      "tiles_traveled": 0,
+      "travel_time_minutes": 0,
+      "travel_time_state": {},
+      "travel_time_area": {},
+      "exempt_from_data_collection": true,
+      "left_department_by_choice": {
+        "occurred": false
+      },
+      "lingered_after_discharge": {
+        "occurred": false
+      },
+      "admitted_to_hospital": {
+        "occurred": false
+      },
+      "boarding_timeout_event": {
+        "occurred": false
+      },
+      "testing_kind": null,
+      "stage1_minutes": 82.3,
+      "stage2_minutes": 147.2,
+      "stage3_minutes": 0.0
+    },
+    "Patient 10": {
+      "ICD-10-CA_code": "R07.3",
+      "CTAS_score": 3,
+      "injuries_zone": "major injuries zone",
+      "time_spent_area": {
+        "major injuries zone": 100.0
+      },
+      "time_spent_state": {
+        "WAITING_FOR_FIRST_ASSESSMENT": 100.0
+      },
+      "tiles_traveled": 0,
+      "travel_time_minutes": 0,
+      "travel_time_state": {},
+      "travel_time_area": {},
+      "exempt_from_data_collection": true,
+      "left_department_by_choice": {
+        "occurred": false
+      },
+      "lingered_after_discharge": {
+        "occurred": false
+      },
+      "admitted_to_hospital": {
+        "occurred": false
+      },
+      "boarding_timeout_event": {
+        "occurred": false
+      },
+      "testing_kind": null,
+      "stage1_minutes": 31.1,
+      "stage2_minutes": 319.2,
+      "stage3_minutes": 0.0
+    }
+  },
+  "Doctor": {
+    "Doctor 1": {
+      "Patients_Attended": [
+        [
+          4,
+          "Patient 4"
+        ],
+        [
+          4,
+          "Patient 7"
+        ],
+        [
+          2,
+          "Patient 8"
+        ]
+      ]
+    }
+  },
+  "BedsideNurse": {
+    "Bedside Nurse 1": {
+      "Patients_Attended": [],
+      "State_Durations": {
+        "IDLE": 99.0
+      },
+      "Action_Log": [
+        {
+          "time": "January 01, 2024, 06:00:00",
+          "plan": "<persona> Patient 7",
+          "state": "IDLE",
+          "occupied": "None",
+          "action_type": "GO_TO_PERSONA",
+          "target_persona": "Patient 7",
+          "target_role": "Patient"
+        }
+      ],
+      "Interactions": []
+    }
+  },
+  "TriageNurse": {
+    "Triage Nurse 1": {},
+    "Triage Nurse 2": {},
+    "Triage Nurse 3": {}
+  }
+}

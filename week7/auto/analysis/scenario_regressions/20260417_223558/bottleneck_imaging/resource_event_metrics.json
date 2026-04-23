@@ -1,0 +1,12 @@
+{
+  "simulation": "bottleneck_imaging-run",
+  "arrival_profile_mode": "surge",
+  "lab_capacity": 2,
+  "lab_turnaround_minutes": 30,
+  "imaging_capacity": 1,
+  "imaging_turnaround_minutes": 120,
+  "boarding_timeout_minutes": null,
+  "lab_patients": 0,
+  "imaging_patients": 0,
+  "boarding_timeout_events": 0
+}

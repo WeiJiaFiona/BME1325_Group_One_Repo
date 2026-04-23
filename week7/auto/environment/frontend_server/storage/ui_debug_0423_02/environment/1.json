@@ -1,0 +1,77 @@
+{
+  "Doctor 1": {
+    "maze": "ed_map",
+    "x": 23,
+    "y": 2
+  },
+  "Triage Nurse 1": {
+    "maze": "ed_map",
+    "x": 12,
+    "y": 13
+  },
+  "Bedside Nurse 1": {
+    "maze": "ed_map",
+    "x": 20,
+    "y": 6
+  },
+  "Patient 1": {
+    "maze": "ed_map",
+    "x": 4,
+    "y": 9
+  },
+  "Patient 2": {
+    "maze": "ed_map",
+    "x": 3,
+    "y": 13
+  },
+  "Triage Nurse 2": {
+    "maze": "ed_map",
+    "x": 12,
+    "y": 13
+  },
+  "Triage Nurse 3": {
+    "maze": "ed_map",
+    "x": 12,
+    "y": 13
+  },
+  "Patient 3": {
+    "maze": "ed_map",
+    "x": 27,
+    "y": 15
+  },
+  "Patient 4": {
+    "maze": "ed_map",
+    "x": 27,
+    "y": 11
+  },
+  "Patient 5": {
+    "maze": "ed_map",
+    "x": 27,
+    "y": 17
+  },
+  "Patient 6": {
+    "maze": "ed_map",
+    "x": 27,
+    "y": 13
+  },
+  "Patient 7": {
+    "maze": "ed_map",
+    "x": 27,
+    "y": 2
+  },
+  "Patient 8": {
+    "maze": "ed_map",
+    "x": 11,
+    "y": 2
+  },
+  "Patient 9": {
+    "maze": "ed_map",
+    "x": 23,
+    "y": 2
+  },
+  "Patient 10": {
+    "maze": "ed_map",
+    "x": 19,
+    "y": 2
+  }
+}

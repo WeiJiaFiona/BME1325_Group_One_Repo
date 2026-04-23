@@ -1,0 +1,5 @@
+patient,ctas_level,arrival_step,arrival_time,pia_step,pia_time,disposition_step,disposition_time,leave_step,leave_time,wait_minutes,treatment_minutes,total_ed_minutes,testing_kind,boarding_timeout_occurred
+Patient 3,2,2,2024-01-01 07:02:00,,,,,10,2024-01-01 07:10:00,,,8.0,,False
+Patient 4,2,5,2024-01-01 07:05:00,,,,,12,2024-01-01 07:12:00,,,7.0,,False
+Patient 5,3,7,2024-01-01 07:07:00,,,,,9,2024-01-01 07:09:00,,,2.0,,False
+Patient 6,3,10,2024-01-01 07:10:00,,,,,12,2024-01-01 07:12:00,,,2.0,,False

@@ -1,0 +1,124 @@
+{
+  "persona": {
+    "Doctor 1": {
+      "movement": [
+        6,
+        6
+      ],
+      "pronunciatio": "\u23f3",
+      "description": "conversing about Dr. 1 asking Patient 7 about their ER visit as Patient 7 reports worsening shortness of breath since early morning with chest tightness, wheezing, and panic because they can\u2019t speak in full sentences @ <waiting> 6 6",
+      "chat": null
+    },
+    "Triage Nurse 1": {
+      "movement": [
+        12,
+        13
+      ],
+      "pronunciatio": null,
+      "description": "None @ ed map:emergency department:triage room:computer",
+      "chat": null
+    },
+    "Bedside Nurse 1": {
+      "movement": [
+        3,
+        3
+      ],
+      "pronunciatio": "\u2601\ufe0f",
+      "description": "Monitoring Patient 7 @ Patient 7",
+      "chat": null
+    },
+    "Patient 1": {
+      "movement": [
+        3,
+        9
+      ],
+      "pronunciatio": "\u231b",
+      "description": "None @ ed map:emergency department:waiting room:waiting room chair",
+      "chat": null
+    },
+    "Patient 2": {
+      "movement": [
+        1,
+        13
+      ],
+      "pronunciatio": "\u231b",
+      "description": "None @ ed map:emergency department:waiting room:waiting room chair",
+      "chat": null
+    },
+    "Triage Nurse 2": {
+      "movement": [
+        12,
+        13
+      ],
+      "pronunciatio": null,
+      "description": "None @ ed map:emergency department:triage room:computer",
+      "chat": null
+    },
+    "Triage Nurse 3": {
+      "movement": [
+        12,
+        13
+      ],
+      "pronunciatio": null,
+      "description": "None @ ed map:emergency department:triage room:computer",
+      "chat": null
+    },
+    "Patient 3": {
+      "movement": [
+        27,
+        15
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (27, 15)",
+      "chat": null
+    },
+    "Patient 4": {
+      "movement": [
+        27,
+        11
+      ],
+      "pronunciatio": "\u231b",
+      "description": "conversing about an emergency physician (Dr. 1) asking Patient 4 about their symptoms and onset, and the patient reporting sudden shortness of breath since early morning with chest tightness, wheezing, anxiety, and difficulty speaking in full sentences @ (27, 11)",
+      "chat": null
+    },
+    "Patient 6": {
+      "movement": [
+        27,
+        13
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (27, 13)",
+      "chat": null
+    },
+    "Patient 7": {
+      "movement": [
+        3,
+        3
+      ],
+      "pronunciatio": "\ud83d\udeb6\u200d\u2642\ufe0f",
+      "description": "conversing about Dr. 1 asking Patient 7 about their ER visit as Patient 7 reports worsening shortness of breath since early morning with chest tightness, wheezing, and panic because they can\u2019t speak in full sentences @ ed map:emergency department:diagnostic room:diagnostic table",
+      "chat": null
+    },
+    "Patient 8": {
+      "movement": [
+        11,
+        2
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (11, 2)",
+      "chat": null
+    },
+    "Patient 10": {
+      "movement": [
+        19,
+        2
+      ],
+      "pronunciatio": "\ud83d\udecc",
+      "description": "None @ <tile> (19, 2)",
+      "chat": null
+    }
+  },
+  "meta": {
+    "curr_time": "January 01, 2024, 07:21:00"
+  }
+}

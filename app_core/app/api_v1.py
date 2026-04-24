@@ -155,6 +155,12 @@ def _extract_pain_score(text: str) -> Optional[int]:
     m = re.search(r"(pain|疼痛|痛感)[^\d]{0,8}(\d{1,2})", t)
     if not m:
         m = re.search(r"\b(\d{1,2})\s*/\s*10\b", t)
+    # Common CN triage shorthand: "10级/3级/8级" (often without the word 疼痛).
+    if not m:
+        m = re.search(r"(\d{1,2})\s*级\b", t)
+    # Another common shorthand: "10分/8分".
+    if not m:
+        m = re.search(r"(\d{1,2})\s*分\b", t)
     if not m:
         return None
     v = int(m.group(2) if m.lastindex and m.lastindex >= 2 else m.group(1))
@@ -959,6 +965,66 @@ def _question_sig(text: str) -> str:
     return re.sub(r"\s+", "", (text or "").strip().lower())
 
 
+def _strip_question_from_explanation(text: str) -> str:
+    """
+    Patient-facing explanations (e.g. RAG imaging notes) must not embed a follow-up question.
+    Otherwise the UI may show an "explanation+question" and then also show the separate
+    follow-up question, which looks like the doctor is repeating themself.
+    """
+    t = str(text or "").strip()
+    if not t:
+        return ""
+    # Remove common follow-up question fragments even if the model did not use "?".
+    # We treat these as "question-like" and keep only the explanation parts.
+    bad_markers = [
+        "从什么时候开始",
+        "什么时候开始",
+        "何时开始",
+        "大概几点",
+        "哪一天",
+        "when did",
+        "what time",
+        "timeline",
+    ]
+
+    # First, cut at the first explicit question mark.
+    for mark in ["？", "?"]:
+        if mark in t:
+            t = t.split(mark, 1)[0].strip()
+
+    # Then, drop any sentence that contains question-like markers.
+    # Split by common sentence separators.
+    parts = re.split(r"(?<=[。.!！])\s*", t)
+    kept = []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        low = p.lower()
+        if any(b.lower() in low for b in bad_markers):
+            continue
+        kept.append(p)
+    t = " ".join(kept).strip() or t
+
+    if t and t[-1] not in "。.!！":
+        t += "。"
+    return t
+
+
+def _enqueue_message_dedup(session: Dict[str, Any], role: str, text: str, event_type: str) -> None:
+    """
+    Avoid emitting the same message twice back-to-back (signature based).
+    This guards against UI duplication when both "answer" and "followup" are produced in one turn.
+    """
+    sig = _question_sig(text)
+    if sig:
+        for m in reversed(list(session.get("pending_messages", []))[-8:]):
+            if m.get("role") == role and m.get("event_type") == event_type:
+                if _question_sig(m.get("text", "")) == sig:
+                    return
+    _enqueue_message(session, role, text, event_type=event_type)
+
+
 def _pick_alternative_slot(plan_contract: Dict[str, Any], current_slot: str) -> str:
     missing = [str(x).strip() for x in plan_contract.get("missing_critical_slots", []) if str(x).strip()]
     for slot in missing:
@@ -1335,9 +1401,9 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
 
         if not ready_for_disposition:
             if bridge_result is not None and getattr(bridge_result, "patient_explanation", ""):
-                imaging_line = str(bridge_result.patient_explanation).strip()
+                imaging_line = _strip_question_from_explanation(getattr(bridge_result, "patient_explanation", ""))
                 _append_transcript(session, "DOCTOR", imaging_line)
-                _enqueue_message(session, "doctor", imaging_line, event_type="doctor_answer")
+                _enqueue_message_dedup(session, "doctor", imaging_line, event_type="doctor_answer")
             elif _is_imaging_question(msg):
                 # Legacy fallback when KB not available.
                 primary = str(retrieval_result.get("primary_protocol_id", "")).strip()
@@ -1350,8 +1416,9 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                     extra={"mode": "patient_question_answer", "primary_protocol_id": primary, "patient_message": msg},
                     use_llm=True,
                 )
+                imaging_line = _strip_question_from_explanation(imaging_line)
                 _append_transcript(session, "DOCTOR", imaging_line)
-                _enqueue_message(session, "doctor", imaging_line, event_type="doctor_answer")
+                _enqueue_message_dedup(session, "doctor", imaging_line, event_type="doctor_answer")
 
             if bridge_result is not None and getattr(bridge_result, "rendered_question", ""):
                 line = _ensure_single_question(str(bridge_result.rendered_question), "When did it start?")
@@ -1364,7 +1431,7 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                     patient_message=msg,
                 )
             _append_transcript(session, "DOCTOR", line)
-            _enqueue_message(session, "doctor", line, event_type="doctor_followup")
+            _enqueue_message_dedup(session, "doctor", line, event_type="doctor_followup")
         else:
             encounter = _ENCOUNTERS.get(session["encounter_id"], {})
             triage = encounter.get("triage", {})

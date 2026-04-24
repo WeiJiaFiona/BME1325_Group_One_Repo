@@ -180,6 +180,10 @@ temp_storage/
 environment/frontend_server/compressed_storage/
 cost-logs/
 
+# Week8 Memory v1 runtime storage (source of truth should not be committed)
+data/memory/
+data/memory/**
+
 analysis/ctas_daily_metrics.csv
 analysis/patient_time_metrics.csv
 state_times.csv

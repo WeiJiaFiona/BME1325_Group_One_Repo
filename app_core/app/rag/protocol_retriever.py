@@ -59,7 +59,7 @@ def normalize_complaints(texts: List[str]) -> List[str]:
         "sepsis": ["sepsis", "fever and chills", "高热", "寒战", "发冷发抖", "感染"],
         "trauma": ["trauma", "injury", "fracture", "fall", "骨折", "外伤", "摔"],
         "labor": ["labor", "delivery", "giving birth", "pregnant", "宫缩", "分娩", "生小孩", "破水", "羊水"],
-        "abdominal_pain": ["abdominal pain", "belly pain", "epigastric pain", "腹痛", "肚子痛", "右下腹痛"],
+        "abdominal_pain": ["abdominal pain", "belly pain", "epigastric pain", "腹痛", "肚子痛", "肚子疼", "右下腹痛"],
         # Not all normalized complaints have an associated protocol doc in week6 yet.
         # Keeping them here helps downstream analytics and future protocol expansion.
         "back_pain": ["back pain", "low back pain", "腰痛", "背痛", "腰背痛", "下背痛"],

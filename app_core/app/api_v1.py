@@ -17,6 +17,15 @@ from app_core.app.schema import PayloadError, validate_encounter_start_payload
 from app_core.doctor_rag.bridge import run_bridge
 from app_core.clinical_kb.registry import registry_map
 
+from app_core.memory.hooks import (
+    build_audit_record,
+    build_handoff_snapshot_id,
+    build_memory_event,
+    generate_user_run_id,
+)
+from app_core.memory.schema import CurrentEncounterSummary, HandoffMemorySnapshot, MemoryQuery
+from app_core.memory.service import MemoryService, create_memory_service
+
 
 ALLOWED_RECEIVER_SYSTEMS = {"OUTPATIENT", "ICU", "WARD"}
 
@@ -35,6 +44,7 @@ class ApiError(Exception):
 _ENCOUNTERS: Dict[str, Dict[str, Any]] = {}
 _HANDOFF_TICKETS: Dict[str, Dict[str, Any]] = {}
 _USER_MODE_SESSION: Optional[Dict[str, Any]] = None
+_MEMORY_SERVICE: Optional[MemoryService] = None
 
 _SMALLTALK_PATTERNS = {
     "hi",
@@ -85,6 +95,251 @@ def _parse_iso(ts: str) -> datetime:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
 
+
+def get_memory_service() -> MemoryService:
+    """
+    Lazy getter to keep env-based configuration (MEMORY_V1_ENABLED/MEMORY_V1_ROOT)
+    and test monkeypatching reliable.
+    """
+    global _MEMORY_SERVICE
+    if _MEMORY_SERVICE is None:
+        _MEMORY_SERVICE = create_memory_service()
+    return _MEMORY_SERVICE
+
+
+def _reset_memory_service_for_tests() -> None:
+    """Test helper: clear cached service so env changes take effect."""
+    global _MEMORY_SERVICE
+    _MEMORY_SERVICE = None
+
+
+def _memory_ctx(session: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Stable per-user-session memory context.
+    - run_id: generated once per user session
+    - memory_encounter_id: stable key for the entire user encounter timeline
+    - step: monotonically increasing memory event sequence
+    """
+    ctx = session.setdefault("memory_v1", {})
+    if not isinstance(ctx, dict):
+        ctx = {}
+        session["memory_v1"] = ctx
+    if not ctx.get("run_id"):
+        ctx["run_id"] = generate_user_run_id()
+    if not ctx.get("memory_encounter_id"):
+        # Keep constant across the whole run; official encounter_id may appear later.
+        pid = str(session.get("patient_id", "patient")).strip().replace(" ", "_") or "patient"
+        ctx["memory_encounter_id"] = f"user_{ctx['run_id']}_{pid}"
+    if "step" not in ctx:
+        ctx["step"] = 0
+    if "closed" not in ctx:
+        ctx["closed"] = False
+    return ctx
+
+
+def _mem_next_step(session: Dict[str, Any]) -> int:
+    ctx = _memory_ctx(session)
+    ctx["step"] = int(ctx.get("step", 0)) + 1
+    return int(ctx["step"])
+
+
+def _mem_append_event(
+    session: Dict[str, Any],
+    *,
+    agent_role: str,
+    event_type: str,
+    content: str,
+    structured_facts: Optional[Dict[str, Any]] = None,
+    tags: Optional[List[str]] = None,
+    state_before: Optional[Dict[str, Any]] = None,
+    state_after: Optional[Dict[str, Any]] = None,
+    checkpoint_for_audit: str = "replay_export",
+) -> None:
+    """
+    Fail-open: memory exceptions must never break the clinical flow.
+    """
+    try:
+        svc = get_memory_service()
+        ctx = _memory_ctx(session)
+        memory_encounter_id = str(ctx.get("memory_encounter_id", "")).strip()
+        run_id = str(ctx.get("run_id", "")).strip()
+        patient_id = str(session.get("patient_id", "")).strip() or "patient"
+        official_encounter_id = str(session.get("encounter_id", "")).strip()
+
+        base_tags = [
+            "mode:user",
+            f"patient:{patient_id}",
+            f"mem_enc:{memory_encounter_id}",
+        ]
+        if tags:
+            base_tags.extend([str(t) for t in tags if isinstance(t, str) and t.strip()])
+
+        facts = dict(structured_facts or {})
+        if official_encounter_id:
+            facts.setdefault("official_encounter_id", official_encounter_id)
+        facts.setdefault("phase", session.get("phase"))
+        facts.setdefault("call_status", session.get("call_status"))
+
+        step = _mem_next_step(session)
+        event = build_memory_event(
+            run_id=run_id,
+            mode="user",
+            encounter_id=memory_encounter_id,
+            patient_id=patient_id,
+            step=step,
+            agent_role=str(agent_role).strip() or "system",
+            event_type=event_type,
+            source="user",
+            priority="medium",
+            content=content,
+            structured_facts=facts,
+            state_before=state_before,
+            state_after=state_after,
+            tags=base_tags,
+        )
+        stored = svc.append_event(event)
+        if stored is not None:
+            svc.append_audit(
+                build_audit_record(
+                    run_id=run_id,
+                    mode="user",
+                    encounter_id=memory_encounter_id,
+                    op_type="write_event",
+                    checkpoint=checkpoint_for_audit,
+                    source_ids=[stored.memory_id],
+                    details={"event_type": event_type},
+                )
+            )
+    except Exception:
+        return None
+
+
+def _mem_update_summary(
+    session: Dict[str, Any],
+    *,
+    latest_memory_id: str = "",
+    checkpoint_for_audit: str = "replay_export",
+) -> None:
+    try:
+        svc = get_memory_service()
+        ctx = _memory_ctx(session)
+        run_id = str(ctx.get("run_id", "")).strip()
+        memory_encounter_id = str(ctx.get("memory_encounter_id", "")).strip()
+        patient_id = str(session.get("patient_id", "")).strip() or "patient"
+
+        shared = session.get("shared_memory", {}) if isinstance(session.get("shared_memory"), dict) else {}
+        triage = shared.get("triage", {}) if isinstance(shared.get("triage"), dict) else {}
+        vitals = shared.get("vitals", {}) if isinstance(shared.get("vitals"), dict) else {}
+        assess = shared.get("doctor_assessment", {}) if isinstance(shared.get("doctor_assessment"), dict) else {}
+        chief = str(shared.get("chief_complaint", "")).strip()
+
+        acuity = triage.get("acuity_ad") if isinstance(triage, dict) else None
+        zone = triage.get("zone") if isinstance(triage, dict) else None
+
+        pending: List[Dict[str, Any]] = []
+        completed: List[Dict[str, Any]] = []
+        if triage:
+            completed.append({"action": "triage_completed"})
+        if session.get("handoff_ticket_id") and session.get("phase") != "DONE":
+            pending.append({"task": "handoff_bed_assignment"})
+
+        step = int(_memory_ctx(session).get("step", 0))
+        # Keep CurrentEncounterSummary schema stable: attach patient-facing fields
+        # under latest_doctor_findings (free-form dict).
+        latest_note = ""
+        if isinstance(assess.get("latest_doctor_message", None), str):
+            latest_note = assess.get("latest_doctor_message", "").strip()
+        if not latest_note and isinstance(assess.get("disposition_note", None), str):
+            latest_note = assess.get("disposition_note", "").strip()
+        summary = CurrentEncounterSummary(
+            run_id=run_id,
+            mode="user",
+            encounter_id=memory_encounter_id,
+            patient_id=patient_id,
+            current_state=str(session.get("phase", "")) or "UNKNOWN",
+            current_zone=str(zone) if zone is not None else None,
+            acuity=str(acuity) if acuity is not None else None,
+            latest_vitals=dict(vitals),
+            active_risks=list(assess.get("risk_flags", [])) if isinstance(assess.get("risk_flags", []), list) else [],
+            pending_tasks=pending,
+            completed_actions=completed,
+            latest_doctor_findings={
+                "chief_complaint": chief,
+                "latest_note": latest_note,
+                "primary_protocol_id": str(assess.get("primary_protocol_id", "")).strip(),
+                "filled_slots": assess.get("filled_slots", {}),
+                "missing_critical_slots": assess.get("missing_critical_slots", []),
+                "active_protocol_ids": assess.get("active_protocol_ids", []),
+            },
+            latest_test_status=dict(shared.get("handoff", {}) if isinstance(shared.get("handoff"), dict) else {}),
+            source_memory_ids=[latest_memory_id] if latest_memory_id else [],
+            updated_at_step=step,
+        )
+        stored = svc.update_current_summary(summary)
+        if stored is not None:
+            svc.append_audit(
+                build_audit_record(
+                    run_id=run_id,
+                    mode="user",
+                    encounter_id=memory_encounter_id,
+                    op_type="update_summary",
+                    checkpoint=checkpoint_for_audit,
+                    source_ids=list(summary.source_memory_ids),
+                    details={"phase": session.get("phase")},
+                )
+            )
+    except Exception:
+        return None
+
+
+def _mem_write_handoff_snapshot(
+    session: Dict[str, Any],
+    *,
+    stage: str,
+    from_role: str,
+    to_role: str,
+    patient_brief: str,
+    current_state: Dict[str, Any],
+    source_memory_ids: Optional[List[str]] = None,
+    checkpoint_for_audit: str = "handoff_requested",
+) -> None:
+    try:
+        svc = get_memory_service()
+        ctx = _memory_ctx(session)
+        run_id = str(ctx.get("run_id", "")).strip()
+        memory_encounter_id = str(ctx.get("memory_encounter_id", "")).strip()
+        patient_id = str(session.get("patient_id", "")).strip() or "patient"
+        snapshot_id = build_handoff_snapshot_id(run_id, memory_encounter_id, stage)
+        snap = HandoffMemorySnapshot(
+            snapshot_id=snapshot_id,
+            run_id=run_id,
+            mode="user",
+            encounter_id=memory_encounter_id,
+            patient_id=patient_id,
+            from_role=from_role,
+            to_role=to_role,
+            handoff_stage=stage,
+            patient_brief=patient_brief,
+            current_state=dict(current_state),
+            pending_tasks=[{"task": "bed_assignment"}] if stage == "requested" else [],
+            source_memory_ids=list(source_memory_ids or []),
+            created_at_step=int(ctx.get("step", 0)),
+        )
+        stored = svc.write_handoff_snapshot(snap)
+        if stored is not None:
+            svc.append_audit(
+                build_audit_record(
+                    run_id=run_id,
+                    mode="user",
+                    encounter_id=memory_encounter_id,
+                    op_type="write_snapshot",
+                    checkpoint=checkpoint_for_audit,
+                    source_ids=list(snap.source_memory_ids),
+                    details={"handoff_stage": stage},
+                )
+            )
+    except Exception:
+        return None
 
 def _normalize_text(text: str) -> str:
     t = text.strip()
@@ -155,6 +410,12 @@ def _extract_pain_score(text: str) -> Optional[int]:
     m = re.search(r"(pain|疼痛|痛感)[^\d]{0,8}(\d{1,2})", t)
     if not m:
         m = re.search(r"\b(\d{1,2})\s*/\s*10\b", t)
+    # Common CN triage shorthand: "10级/3级/8级" (often without the word 疼痛).
+    if not m:
+        m = re.search(r"(\d{1,2})\s*级\b", t)
+    # Another common shorthand: "10分/8分".
+    if not m:
+        m = re.search(r"(\d{1,2})\s*分\b", t)
     if not m:
         return None
     v = int(m.group(2) if m.lastindex and m.lastindex >= 2 else m.group(1))
@@ -863,6 +1124,15 @@ def _maybe_auto_progress(session: Dict[str, Any]) -> None:
                 f"{session['patient_id']}, your number is called. Please proceed to the doctor now.",
                 event_type="number_called",
             )
+            _mem_append_event(
+                session,
+                agent_role="calling_nurse",
+                event_type="doctor_assessment_started",
+                content="Number called; patient proceeds to doctor assessment.",
+                structured_facts={"queue_position": session.get("queue_position", 0)},
+                tags=["doctor"],
+                checkpoint_for_audit="doctor_assessment_start",
+            )
             session["current_agent"] = "DOCTOR"
             doctor_line = _agent_reply(
                 "DOCTOR",
@@ -872,6 +1142,7 @@ def _maybe_auto_progress(session: Dict[str, Any]) -> None:
             )
             _append_transcript(session, "DOCTOR", doctor_line)
             _enqueue_message(session, "doctor", doctor_line, event_type="agent_handoff")
+            _mem_update_summary(session, checkpoint_for_audit="doctor_assessment_start")
 
     elif session["phase"] == "BED_NURSE_FLOW" and session.get("handoff_ticket_id"):
         session["phase_changed"] = True
@@ -894,6 +1165,38 @@ def _maybe_auto_progress(session: Dict[str, Any]) -> None:
         }
         session["shared_memory"]["handoff"] = complete
         _memory_touch(session)
+        _mem_append_event(
+            session,
+            agent_role="bed_nurse",
+            event_type="handoff_completed",
+            content="Handoff completed; bed assigned.",
+            structured_facts={
+                "receiver_system": complete.get("receiver_system"),
+                "receiver_bed": complete.get("receiver_bed"),
+                "transfer_latency_seconds": complete.get("transfer_latency_seconds"),
+            },
+            tags=["handoff"],
+            checkpoint_for_audit="handoff_completed",
+        )
+        _mem_write_handoff_snapshot(
+            session,
+            stage="completed",
+            from_role="doctor",
+            to_role="bed_nurse",
+            patient_brief=str(session.get("shared_memory", {}).get("chief_complaint", "")).strip() or "handoff completed",
+            current_state={"phase": "DONE", "handoff": dict(complete)},
+            source_memory_ids=[],
+            checkpoint_for_audit="handoff_completed",
+        )
+        _mem_append_event(
+            session,
+            agent_role="system",
+            event_type="encounter_closed",
+            content="Encounter closed.",
+            structured_facts={"final_phase": "DONE"},
+            checkpoint_for_audit="replay_export",
+        )
+        _mem_update_summary(session, checkpoint_for_audit="replay_export")
         line = _agent_reply(
             "BEDSIDE_NURSE",
             (
@@ -957,6 +1260,66 @@ def _ensure_single_question(candidate: str, fallback: str) -> str:
 
 def _question_sig(text: str) -> str:
     return re.sub(r"\s+", "", (text or "").strip().lower())
+
+
+def _strip_question_from_explanation(text: str) -> str:
+    """
+    Patient-facing explanations (e.g. RAG imaging notes) must not embed a follow-up question.
+    Otherwise the UI may show an "explanation+question" and then also show the separate
+    follow-up question, which looks like the doctor is repeating themself.
+    """
+    t = str(text or "").strip()
+    if not t:
+        return ""
+    # Remove common follow-up question fragments even if the model did not use "?".
+    # We treat these as "question-like" and keep only the explanation parts.
+    bad_markers = [
+        "从什么时候开始",
+        "什么时候开始",
+        "何时开始",
+        "大概几点",
+        "哪一天",
+        "when did",
+        "what time",
+        "timeline",
+    ]
+
+    # First, cut at the first explicit question mark.
+    for mark in ["？", "?"]:
+        if mark in t:
+            t = t.split(mark, 1)[0].strip()
+
+    # Then, drop any sentence that contains question-like markers.
+    # Split by common sentence separators.
+    parts = re.split(r"(?<=[。.!！])\s*", t)
+    kept = []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        low = p.lower()
+        if any(b.lower() in low for b in bad_markers):
+            continue
+        kept.append(p)
+    t = " ".join(kept).strip() or t
+
+    if t and t[-1] not in "。.!！":
+        t += "。"
+    return t
+
+
+def _enqueue_message_dedup(session: Dict[str, Any], role: str, text: str, event_type: str) -> None:
+    """
+    Avoid emitting the same message twice back-to-back (signature based).
+    This guards against UI duplication when both "answer" and "followup" are produced in one turn.
+    """
+    sig = _question_sig(text)
+    if sig:
+        for m in reversed(list(session.get("pending_messages", []))[-8:]):
+            if m.get("role") == role and m.get("event_type") == event_type:
+                if _question_sig(m.get("text", "")) == sig:
+                    return
+    _enqueue_message(session, role, text, event_type=event_type)
 
 
 def _pick_alternative_slot(plan_contract: Dict[str, Any], current_slot: str) -> str:
@@ -1086,6 +1449,7 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
         raise ApiError("`message` is required and must be non-empty")
 
     session = _ensure_user_session()
+    _memory_ctx(session)  # ensure stable run_id + memory_encounter_id exist
     msg = message.strip()
     clean_msg = _normalize_text(msg)
     _append_transcript(session, "PATIENT", msg)
@@ -1110,6 +1474,19 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
             _append_transcript(session, "TRIAGE_NURSE", ask)
             _enqueue_message(session, "triage_nurse", ask)
         else:
+            _mem_append_event(
+                session,
+                agent_role="triage_nurse",
+                event_type="encounter_started",
+                content="Encounter started (user intake).",
+                structured_facts={
+                    "chief_complaint": req.get("chief_complaint", ""),
+                    "symptoms": list(req.get("symptoms", []) or []),
+                    "arrival_mode": "walk-in",
+                },
+                tags=["intake"],
+                checkpoint_for_audit="post_triage",
+            )
             session["phase"] = "CALL_NURSE_MEASURE"
             session["phase_changed"] = True
             session["current_agent"] = "CALLING_NURSE"
@@ -1127,6 +1504,15 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
             )
             _append_transcript(session, "CALLING_NURSE", call_line)
             _enqueue_message(session, "calling_nurse", call_line, event_type="agent_handoff")
+            _mem_append_event(
+                session,
+                agent_role="calling_nurse",
+                event_type="calling_nurse_called",
+                content="Calling nurse initiated vitals measurement.",
+                structured_facts={"target_zone": "vitals_station"},
+                tags=["vitals"],
+                checkpoint_for_audit="post_triage",
+            )
 
     if session["phase"] == "CALL_NURSE_MEASURE":
         measured = _nurse_measured_vitals(req.get("chief_complaint", ""), req.get("symptoms", []))
@@ -1141,6 +1527,16 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
         )
         _append_transcript(session, "CALLING_NURSE", measure_note)
         _enqueue_message(session, "calling_nurse", measure_note, event_type="measurement_completed")
+        _mem_append_event(
+            session,
+            agent_role="calling_nurse",
+            event_type="vitals_measured",
+            content="Vitals measured.",
+            structured_facts={"vitals": dict(req.get("vitals", {}))},
+            tags=["vitals"],
+            checkpoint_for_audit="post_triage",
+        )
+        _mem_update_summary(session, checkpoint_for_audit="post_triage")
 
         encounter = start_encounter(
             {
@@ -1154,6 +1550,16 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
         session["encounter_id"] = encounter["encounter_id"]
         session["shared_memory"]["triage"] = encounter.get("triage", {})
         _memory_touch(session)
+        _mem_append_event(
+            session,
+            agent_role="triage_nurse",
+            event_type="triage_completed",
+            content="Triage completed.",
+            structured_facts={"triage": dict(encounter.get("triage", {}) or {})},
+            tags=["triage"],
+            checkpoint_for_audit="post_triage",
+        )
+        _mem_update_summary(session, checkpoint_for_audit="post_triage")
 
         triage_line = _agent_reply(
             "TRIAGE_NURSE",
@@ -1188,6 +1594,16 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
             )
             _append_transcript(session, "DOCTOR", doctor_line)
             _enqueue_message(session, "doctor", doctor_line, event_type="agent_handoff")
+            _mem_append_event(
+                session,
+                agent_role="doctor",
+                event_type="doctor_assessment_started",
+                content="Doctor assessment started (green channel).",
+                structured_facts={"triage": dict(encounter.get("triage", {}) or {}), "queue_position": 0},
+                tags=["doctor"],
+                checkpoint_for_audit="doctor_assessment_start",
+            )
+            _mem_update_summary(session, checkpoint_for_audit="doctor_assessment_start")
         else:
             session["phase"] = "WAITING_CALL"
             session["phase_changed"] = True
@@ -1309,6 +1725,22 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
             validated=validated,
             plan_contract=plan_contract,
         )
+        _mem_append_event(
+            session,
+            agent_role="doctor",
+            event_type="doctor_assessment_checkpoint",
+            content="Doctor assessment checkpoint recorded.",
+            structured_facts={
+                "primary_protocol_id": retrieval_result.get("primary_protocol_id"),
+                "secondary_protocol_ids": retrieval_result.get("secondary_protocol_ids", []),
+                "filled_slots": session.get("shared_memory", {}).get("doctor_assessment", {}).get("filled_slots", {}),
+                "missing_critical_slots": session.get("shared_memory", {}).get("doctor_assessment", {}).get("missing_critical_slots", []),
+                "active_target": str((_doctor_runtime(session) or {}).get("active_target", "")).strip(),
+            },
+            tags=["doctor"],
+            checkpoint_for_audit="doctor_assessment_checkpoint",
+        )
+        _mem_update_summary(session, checkpoint_for_audit="doctor_assessment_checkpoint")
 
         old_ready = _doctor_ready_for_disposition(session)
         if retrieval_result.get("fallback_used", False):
@@ -1335,9 +1767,11 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
 
         if not ready_for_disposition:
             if bridge_result is not None and getattr(bridge_result, "patient_explanation", ""):
-                imaging_line = str(bridge_result.patient_explanation).strip()
+                imaging_line = _strip_question_from_explanation(getattr(bridge_result, "patient_explanation", ""))
                 _append_transcript(session, "DOCTOR", imaging_line)
-                _enqueue_message(session, "doctor", imaging_line, event_type="doctor_answer")
+                _enqueue_message_dedup(session, "doctor", imaging_line, event_type="doctor_answer")
+                session.setdefault("shared_memory", {}).setdefault("doctor_assessment", {})["latest_doctor_message"] = imaging_line
+                _memory_touch(session)
             elif _is_imaging_question(msg):
                 # Legacy fallback when KB not available.
                 primary = str(retrieval_result.get("primary_protocol_id", "")).strip()
@@ -1350,8 +1784,11 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                     extra={"mode": "patient_question_answer", "primary_protocol_id": primary, "patient_message": msg},
                     use_llm=True,
                 )
+                imaging_line = _strip_question_from_explanation(imaging_line)
                 _append_transcript(session, "DOCTOR", imaging_line)
-                _enqueue_message(session, "doctor", imaging_line, event_type="doctor_answer")
+                _enqueue_message_dedup(session, "doctor", imaging_line, event_type="doctor_answer")
+                session.setdefault("shared_memory", {}).setdefault("doctor_assessment", {})["latest_doctor_message"] = imaging_line
+                _memory_touch(session)
 
             if bridge_result is not None and getattr(bridge_result, "rendered_question", ""):
                 line = _ensure_single_question(str(bridge_result.rendered_question), "When did it start?")
@@ -1364,12 +1801,15 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                     patient_message=msg,
                 )
             _append_transcript(session, "DOCTOR", line)
-            _enqueue_message(session, "doctor", line, event_type="doctor_followup")
+            _enqueue_message_dedup(session, "doctor", line, event_type="doctor_followup")
+            session.setdefault("shared_memory", {}).setdefault("doctor_assessment", {})["latest_doctor_message"] = line
+            _memory_touch(session)
         else:
             encounter = _ENCOUNTERS.get(session["encounter_id"], {})
             triage = encounter.get("triage", {})
             acuity = triage.get("acuity_ad", "C")
             assess = session.setdefault("shared_memory", {}).setdefault("doctor_assessment", {})
+            assess["primary_protocol_id"] = str(retrieval_result.get("primary_protocol_id", "")).strip()
             assess["doctor_data"] = _doctor_data(session)
             assess["assumptions"] = _doctor_runtime(session).get("assumptions", [])
             assess["updated_at"] = _utc_now_iso()
@@ -1377,6 +1817,12 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
 
             if acuity in {"A", "B", "C"}:
                 target = "ICU" if acuity in {"A", "B"} else "WARD"
+                disposition_note = _doctor_disposition_summary(
+                    retrieval_result=retrieval_result,
+                    session=session,
+                    target=target,
+                )
+                assess["disposition_note"] = disposition_note
                 ticket = request_handoff(
                     {
                         "encounter_id": session["encounter_id"],
@@ -1385,6 +1831,46 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                     }
                 )
                 session["handoff_ticket_id"] = ticket["handoff_ticket_id"]
+                _mem_append_event(
+                    session,
+                    agent_role="doctor",
+                    event_type="disposition_decided",
+                    content="Disposition decided.",
+                    structured_facts={
+                        "target_system": target,
+                        "acuity": acuity,
+                        "primary_protocol_id": str(retrieval_result.get("primary_protocol_id", "")).strip(),
+                        "doctor_note": str(disposition_note).strip(),
+                    },
+                    tags=["disposition"],
+                    checkpoint_for_audit="handoff_requested",
+                )
+                _mem_append_event(
+                    session,
+                    agent_role="doctor",
+                    event_type="handoff_requested",
+                    content="Handoff requested.",
+                    structured_facts={"handoff_ticket_id": ticket.get("handoff_ticket_id"), "target_system": target, "reason": "doctor disposition after assessment"},
+                    tags=["handoff"],
+                    checkpoint_for_audit="handoff_requested",
+                )
+                _mem_write_handoff_snapshot(
+                    session,
+                    stage="requested",
+                    from_role="doctor",
+                    to_role=str(target).lower(),
+                    patient_brief=str(session.get("shared_memory", {}).get("chief_complaint", "")).strip() or "handoff requested",
+                    current_state={
+                        "phase": session.get("phase"),
+                        "triage": dict(session.get("shared_memory", {}).get("triage", {}) or {}),
+                        "vitals": dict(session.get("shared_memory", {}).get("vitals", {}) or {}),
+                        "doctor_findings": dict(session.get("shared_memory", {}).get("doctor_assessment", {}).get("filled_slots", {}) or {}),
+                        "target_system": target,
+                    },
+                    source_memory_ids=[],
+                    checkpoint_for_audit="handoff_requested",
+                )
+                _mem_update_summary(session, checkpoint_for_audit="handoff_requested")
                 session["phase"] = "BED_NURSE_FLOW"
                 session["phase_changed"] = True
                 session["current_agent"] = "BEDSIDE_NURSE"
@@ -1394,11 +1880,7 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                 }
                 line = _agent_reply(
                     "DOCTOR",
-                    _doctor_disposition_summary(
-                        retrieval_result=retrieval_result,
-                        session=session,
-                        target=target,
-                    ),
+                    disposition_note,
                     session,
                     extra={
                         "target_system": target,
@@ -1429,6 +1911,24 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                 )
                 _append_transcript(session, "DOCTOR", line)
                 _enqueue_message(session, "doctor", line, event_type="doctor_disposition")
+                _mem_append_event(
+                    session,
+                    agent_role="doctor",
+                    event_type="disposition_decided",
+                    content="Disposition decided: outpatient.",
+                    structured_facts={"target_system": "OUTPATIENT", "acuity": acuity},
+                    tags=["disposition"],
+                    checkpoint_for_audit="replay_export",
+                )
+                _mem_append_event(
+                    session,
+                    agent_role="system",
+                    event_type="encounter_closed",
+                    content="Encounter closed (outpatient).",
+                    structured_facts={"final_phase": "DONE"},
+                    checkpoint_for_audit="replay_export",
+                )
+                _mem_update_summary(session, checkpoint_for_audit="replay_export")
 
     elif session["phase"] == "BED_NURSE_FLOW":
         _maybe_auto_progress(session)
@@ -1474,6 +1974,7 @@ def user_mode_session_status() -> Dict[str, Any]:
 def reset_user_mode_session() -> Dict[str, Any]:
     global _USER_MODE_SESSION
     _USER_MODE_SESSION = None
+    _reset_memory_service_for_tests()
     session = _ensure_user_session()
     return {
         "session": _build_session_payload(session),
@@ -1482,6 +1983,14 @@ def reset_user_mode_session() -> Dict[str, Any]:
         "phase_changed": False,
         "transcript_tail": [],
     }
+
+
+def _debug_user_memory_context() -> Dict[str, Any]:
+    """
+    Test/debug helper: return the stable user memory context (run_id, memory_encounter_id, step).
+    """
+    session = _ensure_user_session()
+    return dict(_memory_ctx(session))
 
 
 def start_encounter(payload: Dict[str, Any]) -> Dict[str, Any]:

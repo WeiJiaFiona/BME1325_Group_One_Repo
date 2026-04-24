@@ -69,6 +69,53 @@ def _backend_mode() -> str:
     return mode if mode in {"auto", "user"} else "auto"
 
 
+def _ensure_user_mode_frontend_runtime() -> None:
+    """
+    User mode does not require the Reverie backend to be running, but the
+    baseline EDSim frontend expects temp_storage pointers (curr_sim_code/curr_step)
+    to exist. For EDSIM_MODE=user, create minimal pointers to an existing
+    storage sim folder so the map can render.
+    """
+    TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    (TEMP_ROOT / "commands").mkdir(parents=True, exist_ok=True)
+
+    f_curr_sim_code = TEMP_ROOT / "curr_sim_code.json"
+    f_curr_step = TEMP_ROOT / "curr_step.json"
+    if f_curr_sim_code.exists() and f_curr_step.exists():
+        return
+
+    # Prefer a well-known seed if present, otherwise pick any available sim folder.
+    storage_root = STORAGE_ROOT
+    candidates = []
+    if storage_root.exists():
+        for d in sorted([p for p in storage_root.iterdir() if p.is_dir() and not p.name.startswith(".")]):
+            candidates.append(d.name)
+    preferred = None
+    for name in ["curr_sim", "ed_sim_n5"]:
+        if name in candidates:
+            preferred = name
+            break
+    sim_code = preferred or (candidates[0] if candidates else "")
+    if not sim_code:
+        return
+
+    # Choose a step that exists (latest environment frame if present).
+    env_dir = storage_root / sim_code / "environment"
+    step = 0
+    if env_dir.exists():
+        nums = []
+        for p in env_dir.glob("*.json"):
+            try:
+                nums.append(int(p.stem))
+            except Exception:
+                pass
+        if nums:
+            step = max(nums)
+
+    f_curr_sim_code.write_text(json.dumps({"sim_code": sim_code}), encoding="utf-8")
+    f_curr_step.write_text(json.dumps({"step": step}), encoding="utf-8")
+
+
 def _current_sim_code(default: Optional[str] = None) -> Optional[str]:
     try:
         with open(_temp_path("curr_sim_code.json"), encoding="utf-8") as f:
@@ -316,6 +363,9 @@ def home(request):
             f"Backend is started with EDSIM_MODE={backend_mode}. "
             f"To use {requested_ui_mode} mode, restart backend with EDSIM_MODE={requested_ui_mode}."
         )
+
+    if effective_ui_mode == "user":
+        _ensure_user_mode_frontend_runtime()
 
     f_curr_sim_code = _temp_path("curr_sim_code.json")
     f_curr_step = _temp_path("curr_step.json")

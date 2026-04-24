@@ -167,3 +167,54 @@ def test_doctor_answers_patient_imaging_question_before_followup():
     assert doctor_msgs
     merged = " ".join(doctor_msgs).lower()
     assert ("ct" in merged) or ("mri" in merged) or ("影像" in merged) or ("扫描" in merged)
+
+
+def test_imaging_answer_does_not_embed_followup_question_twice():
+    user_mode_chat_turn("我头很疼，9级，刚刚突然开始的，还恶心想吐。")
+    for _ in range(8):
+        called = user_mode_session_status()
+        if called["session"]["phase"] == "DOCTOR_CALLED":
+            break
+    if called["session"]["phase"] != "DOCTOR_CALLED":
+        called = user_mode_chat_turn("状态更新")
+
+    turn = user_mode_chat_turn("我这种头痛要做什么影像？CT还是MRI？")
+    # Use pending_messages with event types to disambiguate answer vs followup ordering.
+    answers = [
+        m["text"]
+        for m in turn.get("pending_messages", [])
+        if m.get("role") == "doctor" and m.get("event_type") == "doctor_answer"
+    ]
+    assert answers
+    answer = answers[-1]
+    assert ("ct" in answer.lower()) or ("mri" in answer.lower()) or ("影像" in answer) or ("扫描" in answer)
+    # The explanation should not embed a follow-up onset question.
+    assert ("从什么时候开始" not in answer) and ("什么时候开始" not in answer)
+
+
+def test_abdominal_pain_onset_in_free_form_is_not_re_asked_as_duration_loop():
+    """
+    Regression: if the patient already states onset in free-form CN (e.g. "从早上开始肚子疼"),
+    the doctor should not ask the onset/duration question again immediately.
+    """
+    user_mode_chat_turn("你好")
+    user_mode_chat_turn("我肚子疼，大概10级")
+    # Let queue progress automatically if needed.
+    for _ in range(10):
+        called = user_mode_session_status()
+        if called["session"]["phase"] == "DOCTOR_CALLED":
+            break
+    if called["session"]["phase"] != "DOCTOR_CALLED":
+        called = user_mode_chat_turn("状态更新")
+    assert called["session"]["phase"] == "DOCTOR_CALLED"
+
+    turn1 = user_mode_chat_turn("我从早上开始肚子疼")
+    followups1 = [
+        m["text"]
+        for m in turn1.get("pending_messages", [])
+        if m.get("role") == "doctor" and m.get("event_type") == "doctor_followup"
+    ]
+    if followups1:
+        q1 = followups1[-1]
+        assert "什么时候开始" not in q1
+        assert "从什么时候" not in q1

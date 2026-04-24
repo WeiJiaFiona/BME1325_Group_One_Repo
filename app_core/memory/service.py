@@ -40,6 +40,9 @@ class MemoryService:
         record = summary if isinstance(summary, CurrentEncounterSummary) else CurrentEncounterSummary.from_dict(summary)
         return self.current.upsert(record)
 
+    # Compatibility alias: earlier drafts used upsert_current_summary(...)
+    upsert_current_summary = update_current_summary
+
     def get_current_summary(self, run_id: str, mode: str, encounter_id: str) -> CurrentEncounterSummary | None:
         if not self.enabled:
             return None

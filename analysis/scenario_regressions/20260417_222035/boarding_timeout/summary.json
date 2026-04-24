@@ -1,0 +1,48 @@
+{
+  "scenario": "boarding_timeout",
+  "started_at": "2026-04-17 22:21:15",
+  "wall_clock_seconds": 12.058,
+  "returncode": 1,
+  "error": "[Errno 13] Permission denied: 'D:\\\\projects\\\\BME1325Spring2026\\\\BME1325_Group_One_Repo\\\\week7_auto\\\\environment\\\\frontend_server\\\\temp_storage\\\\curr_step.json'",
+  "meta_updates": {
+    "step": 0,
+    "seed": 1337,
+    "fill_injuries": 0,
+    "status_interval_steps": 1,
+    "doctor_starting_amount": 1,
+    "triage_starting_amount": 1,
+    "bedside_starting_amount": 1,
+    "curr_time": "January 01, 2024, 10:00:00",
+    "patient_rate_modifier": 1.0,
+    "arrival_profile_mode": "normal",
+    "simulate_hospital_admission": true,
+    "boarding_timeout_minutes": 5,
+    "admission_probability_by_ctas": {
+      "1": 1.0,
+      "2": 1.0,
+      "3": 1.0,
+      "4": 1.0,
+      "5": 1.0
+    },
+    "admission_boarding_minutes_min": 60,
+    "admission_boarding_minutes_max": 240
+  },
+  "samples": [],
+  "sample_summary": {
+    "max_current_patients": 0,
+    "max_total_patients": 0,
+    "max_triage_queue": 0,
+    "max_doctor_global_queue": 0,
+    "max_lab_waiting": 0,
+    "max_imaging_waiting": 0,
+    "max_boarding_timeout_events": 0
+  },
+  "data_collection": {
+    "patient_records": 0,
+    "boarding_timeout_events": 0,
+    "admitted_patients": 0
+  },
+  "fail_safe_triggered": false,
+  "curl_failed": false,
+  "final_status": {}
+}

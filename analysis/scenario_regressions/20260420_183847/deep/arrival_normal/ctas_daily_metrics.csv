@@ -1,0 +1,6 @@
+date,ctas_level,patients,avg_wait_minutes,median_wait_minutes,avg_treatment_minutes,median_treatment_minutes,avg_total_ed_minutes,median_total_ed_minutes
+2024-01-01,1,9,,,,,23.0,10.0
+2024-01-01,2,71,250.33333333333334,199.0,59.5,59.5,47.42253521126761,29.0
+2024-01-01,3,87,236.28571428571428,249.0,73.0,80.0,42.41379310344828,17.0
+2024-01-01,4,14,,,,,19.928571428571427,7.5
+2024-01-01,5,5,,,,,65.4,9.0

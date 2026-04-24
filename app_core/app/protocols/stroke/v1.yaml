@@ -1,0 +1,43 @@
+protocol_id: stroke
+version: v1
+chief_complaint_aliases:
+  - stroke
+  - face droop
+  - slurred speech
+  - unilateral weakness
+  - 中风
+  - 口角歪斜
+  - 单侧无力
+trigger_keywords:
+  - FAST
+  - aphasia
+  - hemiparesis
+  - 含糊不清
+red_flags:
+  - neuro_deficit
+  - altered_mental_status
+required_slots:
+  - duration
+  - syncope
+questions:
+  - question_id: st_last_known_well
+    slot: duration
+    priority: 100
+    answer_type: text
+    zh: 最后一次正常的时间大约是什么时候？
+    en: What time were you last known well?
+  - question_id: st_syncope
+    slot: syncope
+    priority: 90
+    answer_type: boolean
+    zh: 是否出现过意识丧失或晕厥？
+    en: Any loss of consciousness or fainting?
+urgency_rules:
+  - rule_id: st_neuro
+    if_all: ["complaint:stroke"]
+    urgency_floor: RESUS
+    disposition_floor: ICU
+  - rule_id: st_instability
+    if_all: ["sbp<90", "complaint:stroke"]
+    urgency_floor: RESUS
+    disposition_floor: ICU

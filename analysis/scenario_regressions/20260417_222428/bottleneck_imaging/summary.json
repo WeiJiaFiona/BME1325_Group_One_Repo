@@ -1,0 +1,178 @@
+{
+  "scenario": "bottleneck_imaging",
+  "started_at": "2026-04-17 23:29:42",
+  "wall_clock_seconds": 978.812,
+  "returncode": 1,
+  "error": "Timed out waiting for step 2; last_seen=1",
+  "meta_updates": {
+    "step": 0,
+    "seed": 1337,
+    "fill_injuries": 0,
+    "status_interval_steps": 1,
+    "doctor_starting_amount": 1,
+    "triage_starting_amount": 1,
+    "bedside_starting_amount": 1,
+    "curr_time": "January 01, 2024, 11:00:00",
+    "patient_rate_modifier": 1.5,
+    "arrival_profile_mode": "surge",
+    "surge_baseline_rate": 1.5,
+    "surge_slowdown_scale": 0.0,
+    "imaging_capacity": 1,
+    "imaging_turnaround_minutes": 120,
+    "lab_capacity": 2,
+    "lab_turnaround_minutes": 30,
+    "simulate_hospital_admission": false
+  },
+  "samples": [
+    {
+      "sampled_at": "2026-04-17 23:14:42",
+      "status": {
+        "step": 0,
+        "sim_time": "Jan 01 2024  11:00",
+        "elapsed_hours": 0,
+        "elapsed_mins": 0,
+        "current_patients": 2,
+        "total_patients": 2,
+        "completed": 0,
+        "left_ed": 0,
+        "patient_states": {
+          "WAITING_FOR_TEST": 2
+        },
+        "zone_occupancy": {
+          "trauma room": {
+            "current": 0,
+            "capacity": 1
+          },
+          "major injuries zone": {
+            "current": 0,
+            "capacity": 5
+          },
+          "minor injuries zone": {
+            "current": 0,
+            "capacity": 5
+          },
+          "diagnostic room": {
+            "current": 0,
+            "capacity": 1
+          }
+        },
+        "queues": {
+          "triage": 0,
+          "bedside_nurse_waiting": 0,
+          "pager": 0,
+          "doctor_global": 2,
+          "lab_waiting": 0,
+          "imaging_waiting": 2
+        },
+        "resources": {
+          "arrival_profile_mode": "surge",
+          "lab_in_progress": 0,
+          "lab_capacity": 2,
+          "lab_turnaround_minutes": 30.0,
+          "imaging_in_progress": 0,
+          "imaging_capacity": 1,
+          "imaging_turnaround_minutes": 120.0,
+          "boarding_timeout_events": 0,
+          "boarding_timeout_minutes": 240.0
+        },
+        "nurse_status": {
+          "Monitoring": 0,
+          "Transferring": 0,
+          "Resting": 0,
+          "Available": 1,
+          "Other": 0
+        },
+        "doctor_assigned": {
+          "Doctor 1": 0
+        },
+        "doctors_total": 1,
+        "doctors_accepting": 0,
+        "doctor_max_patients": 5
+      },
+      "movement_files": 1,
+      "environment_files": 1,
+      "chunk": 1,
+      "expected_step": 1,
+      "observed_step": 1
+    }
+  ],
+  "sample_summary": {
+    "max_current_patients": 2,
+    "max_total_patients": 2,
+    "max_triage_queue": 0,
+    "max_doctor_global_queue": 2,
+    "max_lab_waiting": 0,
+    "max_imaging_waiting": 2,
+    "max_boarding_timeout_events": 0
+  },
+  "data_collection": {
+    "patient_records": 0,
+    "boarding_timeout_events": 0,
+    "admitted_patients": 0
+  },
+  "fail_safe_triggered": false,
+  "curl_failed": false,
+  "final_status": {
+    "step": 0,
+    "sim_time": "Jan 01 2024  11:00",
+    "elapsed_hours": 0,
+    "elapsed_mins": 0,
+    "current_patients": 2,
+    "total_patients": 2,
+    "completed": 0,
+    "left_ed": 0,
+    "patient_states": {
+      "WAITING_FOR_TEST": 2
+    },
+    "zone_occupancy": {
+      "trauma room": {
+        "current": 0,
+        "capacity": 1
+      },
+      "major injuries zone": {
+        "current": 0,
+        "capacity": 5
+      },
+      "minor injuries zone": {
+        "current": 0,
+        "capacity": 5
+      },
+      "diagnostic room": {
+        "current": 0,
+        "capacity": 1
+      }
+    },
+    "queues": {
+      "triage": 0,
+      "bedside_nurse_waiting": 0,
+      "pager": 0,
+      "doctor_global": 2,
+      "lab_waiting": 0,
+      "imaging_waiting": 2
+    },
+    "resources": {
+      "arrival_profile_mode": "surge",
+      "lab_in_progress": 0,
+      "lab_capacity": 2,
+      "lab_turnaround_minutes": 30.0,
+      "imaging_in_progress": 0,
+      "imaging_capacity": 1,
+      "imaging_turnaround_minutes": 120.0,
+      "boarding_timeout_events": 0,
+      "boarding_timeout_minutes": 240.0
+    },
+    "nurse_status": {
+      "Monitoring": 0,
+      "Transferring": 0,
+      "Resting": 0,
+      "Available": 1,
+      "Other": 0
+    },
+    "doctor_assigned": {
+      "Doctor 1": 0
+    },
+    "doctors_total": 1,
+    "doctors_accepting": 0,
+    "doctor_max_patients": 5
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "returncode": 0,
+  "stdout": "Using simulation data from \"arrival_surge-20260418_001519-run\"\nWrote per-patient metrics to D:\\projects\\BME1325Spring2026\\BME1325_Group_One_Repo\\week7_auto\\analysis\\patient_time_metrics.csv\nWrote CTAS aggregates to D:\\projects\\BME1325Spring2026\\BME1325_Group_One_Repo\\week7_auto\\analysis\\ctas_daily_metrics.csv\nWrote resource/event metrics to D:\\projects\\BME1325Spring2026\\BME1325_Group_One_Repo\\week7_auto\\analysis\\resource_event_metrics.json\n",
+  "stderr": ""
+}

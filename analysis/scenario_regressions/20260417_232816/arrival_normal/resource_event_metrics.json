@@ -1,0 +1,12 @@
+{
+  "simulation": "arrival_normal-20260417_232816-run",
+  "arrival_profile_mode": "normal",
+  "lab_capacity": null,
+  "lab_turnaround_minutes": null,
+  "imaging_capacity": null,
+  "imaging_turnaround_minutes": null,
+  "boarding_timeout_minutes": null,
+  "lab_patients": 0,
+  "imaging_patients": 0,
+  "boarding_timeout_events": 0
+}

@@ -1,0 +1,18 @@
+{"case_id":"cp_001","protocol_id":"chest_pain","keywords":["chest tightness","radiating pain","cold sweat","exertional","胸闷","放射痛","冷汗"],"risk_flags":["possible_acs","hypoxia"]}
+{"case_id":"cp_002","protocol_id":"chest_pain","keywords":["chest pressure","jaw pain","near syncope","胸口压迫","下颌痛","近乎晕厥"],"risk_flags":["possible_acs","syncope"]}
+{"case_id":"dy_001","protocol_id":"dyspnea","keywords":["can't breathe","orthopnea","wheeze","喘不上气","呼吸困难"],"risk_flags":["respiratory_distress"]}
+{"case_id":"dy_002","protocol_id":"dyspnea","keywords":["short of breath","speaks in short phrases","气促","说话断句"],"risk_flags":["respiratory_distress"]}
+{"case_id":"st_001","protocol_id":"stroke","keywords":["face droop","slurred speech","one arm weak","口角歪","言语含糊","单侧无力"],"risk_flags":["neuro_deficit"]}
+{"case_id":"st_002","protocol_id":"stroke","keywords":["sudden weakness","vision loss","突然无力","视物模糊"],"risk_flags":["neuro_deficit"]}
+{"case_id":"se_001","protocol_id":"sepsis","keywords":["fever and chills","confusion","rigors","高热寒战","意识模糊","发冷发抖"],"risk_flags":["possible_sepsis","altered_mental_status"]}
+{"case_id":"se_002","protocol_id":"sepsis","keywords":["infection source","low blood pressure","感染灶","低血压"],"risk_flags":["possible_sepsis","hypotension"]}
+{"case_id":"tr_001","protocol_id":"trauma","keywords":["fall","fracture","severe pain","摔伤","骨折","剧痛"],"risk_flags":["major_trauma"]}
+{"case_id":"tr_002","protocol_id":"trauma","keywords":["blunt chest injury","breathing pain","胸部钝挫伤","呼吸痛"],"risk_flags":["major_trauma","breathing_difficulty"]}
+{"case_id":"lb_001","protocol_id":"labor","keywords":["water broke","contraction every","urge to push","羊水破了","宫缩","想用力"],"risk_flags":["active_labor"]}
+{"case_id":"lb_002","protocol_id":"labor","keywords":["pregnant 39 weeks","vaginal bleeding","term pregnancy","孕39周","见红","分娩"],"risk_flags":["obstetric_urgent"]}
+{"case_id":"ap_001","protocol_id":"abdominal_pain","keywords":["right lower quadrant pain","rebound tenderness","nausea vomiting","右下腹痛","反跳痛","恶心呕吐"],"risk_flags":["possible_surgical_abdomen"]}
+{"case_id":"ap_002","protocol_id":"abdominal_pain","keywords":["epigastric pain","fever abdominal pain","上腹痛","腹痛发热"],"risk_flags":["possible_intraabdominal_infection"]}
+{"case_id":"an_001","protocol_id":"anaphylaxis","keywords":["hives and throat tight","lip swelling","allergic reaction","荨麻疹","喉咙紧","嘴唇肿"],"risk_flags":["airway_risk"]}
+{"case_id":"an_002","protocol_id":"anaphylaxis","keywords":["peanut allergy","wheeze after food","花生过敏","进食后喘鸣"],"risk_flags":["airway_risk","respiratory_distress"]}
+{"case_id":"hd_001","protocol_id":"headache","keywords":["sudden severe headache","worst headache","突发剧烈头痛","最严重头痛"],"risk_flags":["neuro_red_flag"]}
+{"case_id":"hd_002","protocol_id":"headache","keywords":["headache with vomiting","blurred vision headache","头痛伴呕吐","头痛伴视物模糊"],"risk_flags":["intracranial_risk"]}

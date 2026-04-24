@@ -1,0 +1,22 @@
+{% load staticfiles %}
+{% if effective_ui_mode == 'user' %}
+<aside style="width:28%; min-width:320px; max-width:420px; border:1px solid #d8d8d8; border-radius:10px; padding:12px; background:#fff;">
+  <h4 style="margin-top:4px; margin-bottom:10px;">User Mode Chat</h4>
+  {% if mode_switch_message %}
+  <div style="font-size:13px; line-height:1.5; margin-bottom:10px; background:#fff3cd; border:1px solid #ffeeba; border-radius:8px; padding:8px; color:#664d03;">
+    {{ mode_switch_message }}
+  </div>
+  {% endif %}
+  <div id="user-mode-status" style="font-size:13px; line-height:1.5; margin-bottom:10px; background:#f6f8fa; border-radius:8px; padding:8px;">Loading session...</div>
+  <div id="user-mode-chat-log" style="height:300px; overflow-y:auto; border:1px solid #e5e5e5; border-radius:8px; padding:8px; background:#fafafa;"></div>
+  <div style="display:flex; gap:8px; margin-top:10px;">
+    <input id="user-mode-input" type="text" placeholder="Describe symptoms..." style="flex:1; padding:8px; border:1px solid #bbb; border-radius:8px;">
+    <button id="user-mode-send" style="padding:8px 12px; border:none; border-radius:8px; background:#198754; color:white;">Send</button>
+  </div>
+  <div style="display:flex; gap:8px; margin-top:8px;">
+    <button id="user-mode-refresh" style="padding:6px 10px; border:1px solid #bbb; border-radius:8px; background:#fff;">Refresh</button>
+    <button id="user-mode-reset" style="padding:6px 10px; border:1px solid #bbb; border-radius:8px; background:#fff;">Reset</button>
+    <button id="user-mode-move" style="padding:6px 10px; border:1px solid #bbb; border-radius:8px; background:#fff;">Move to Target</button>
+  </div>
+</aside>
+{% endif %}

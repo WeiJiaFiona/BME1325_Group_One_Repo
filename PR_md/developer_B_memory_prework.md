@@ -40,8 +40,8 @@ Before Developer B starts real hook integration in production code, Developer A 
 - `append_audit(...)`
 
 4. `app_core/memory/config.py`
-- `MEMORY_ENABLED` master switch
-- `data/memory` path policy
+- `MEMORY_V1_ENABLED` master switch
+- `MEMORY_V1_ROOT` path policy (defaults to `runtime_data/memory`)
 - mode isolation policy (`run_id + mode + encounter_id + patient_id`)
 
 5. Fail-open backend
@@ -54,7 +54,7 @@ Before Developer B starts real hook integration in production code, Developer A 
 - `next_memory_step(...)`
 
 ### Non-negotiable semantics
-- `MEMORY_ENABLED=0/1` is the master switch (default ON when unset). Read once per run/encounter start.
+- `MEMORY_V1_ENABLED=0/1` is the master switch (default ON when unset). Read once per run/encounter start.
 - Every record is keyed by at least: `run_id`, `mode`, `encounter_id`, `patient_id`.
 - `MemoryItem.step` is a monotonically increasing event sequence within a run.
 - auto alignment uses `structured_facts.sim_step` (simulation step); user alignment may use `structured_facts.dialogue_turn` optionally.
@@ -71,7 +71,7 @@ Before Developer B starts real hook integration in production code, Developer A 
   - integration tests that auto-skip until `app_core.memory` exists
 
 ### 2.3 ON/OFF ablation plan (runtime)
-- Use `MEMORY_ENABLED=0/1`.
+- Use `MEMORY_V1_ENABLED=0/1`.
 - Value must be recorded into run metadata/replay export so results are traceable.
 
 ## 3) Runbook (Developer B Prework)
@@ -83,12 +83,12 @@ cd /home/jiawei2022/BME1325/week8/merge
 pytest -q tests_week8
 ```
 
-### Ablation: OFF vs ON (will become meaningful after A substrate lands)
+### Ablation: OFF vs ON (Week8 master switch)
 
 ```bash
 cd /home/jiawei2022/BME1325/week8/merge
-MEMORY_ENABLED=0 pytest -q tests_week8
-MEMORY_ENABLED=1 pytest -q tests_week8
+MEMORY_V1_ENABLED=0 pytest -q tests_week8
+MEMORY_V1_ENABLED=1 pytest -q tests_week8
 ```
 
 Expected behavior in current prework stage:
@@ -99,4 +99,3 @@ Expected behavior in current prework stage:
 - B will not patch user/auto logic to do file IO.
 - B will only integrate production hooks after A provides `memory_service.*` (single service boundary).
 - All new runtime data must live under `data/memory/` and be gitignored.
-

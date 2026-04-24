@@ -183,6 +183,8 @@ cost-logs/
 # Week8 Memory v1 runtime storage (source of truth should not be committed)
 data/memory/
 data/memory/**
+runtime_data/memory/
+runtime_data/memory/**
 
 analysis/ctas_daily_metrics.csv
 analysis/patient_time_metrics.csv

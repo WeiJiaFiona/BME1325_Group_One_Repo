@@ -12,8 +12,8 @@ pytest -q tests_week8
 Ablation (once substrate + hooks land):
 
 ```bash
-MEMORY_ENABLED=0 pytest -q tests_week8
-MEMORY_ENABLED=1 pytest -q tests_week8
+MEMORY_V1_ENABLED=0 pytest -q tests_week8
+MEMORY_V1_ENABLED=1 pytest -q tests_week8
 ```
 
 Notes:

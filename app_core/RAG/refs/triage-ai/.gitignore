@@ -1,0 +1,79 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build
+dist/
+build/
+.next/
+out/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Test
+coverage/
+.nyc_output/
+
+# E2E Tests (private)
+e2e/
+test-results/
+playwright.config.ts
+playwright-report/
+
+# Core Engine Logic (proprietary IP)
+packages/triage-engine/src/guardrails.ts
+packages/triage-engine/src/ats-engine.ts
+packages/triage-engine/src/clinical-rules.ts
+
+# API Service Implementation (proprietary)
+# apps/api/src/services/conversation-engine.ts  # Needed for deployment
+# apps/api/src/services/triage-service.ts
+
+# Turbo
+.turbo/
+
+# Database (local dev)
+*.db
+*.sqlite
+
+# Secrets (never commit)
+*.pem
+*.key
+credentials.json
+.vercel
+
+# Project config (private)
+CLAUDE.md
+.env*.local
+.claude/
+
+# Demo video (proprietary)
+demo-video/
+
+# Tests (proprietary edge cases)
+tests/
+
+# Database schema (proprietary)
+supabase/
+
+# Test results (internal)
+docs/TEST_RESULTS.md

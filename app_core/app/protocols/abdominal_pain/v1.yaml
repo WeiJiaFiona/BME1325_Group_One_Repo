@@ -1,0 +1,51 @@
+protocol_id: abdominal_pain
+version: v1
+chief_complaint_aliases:
+  - abdominal pain
+  - belly pain
+  - epigastric pain
+  - 腹痛
+  - 肚子痛
+  - 右下腹痛
+trigger_keywords:
+  - rebound tenderness
+  - vomiting
+  - fever
+  - 反跳痛
+  - 呕吐
+  - 发热
+red_flags:
+  - hypotension
+  - fever
+required_slots:
+  - duration
+  - worsening_pain
+  - fever
+questions:
+  - question_id: ap_when
+    slot: duration
+    priority: 100
+    answer_type: text
+    zh: 腹痛是从什么时候开始的？
+    en: When did the abdominal pain start?
+  - question_id: ap_worse
+    slot: worsening_pain
+    priority: 95
+    answer_type: boolean
+    zh: 疼痛是否正在加重？
+    en: Is the pain getting worse?
+  - question_id: ap_fever
+    slot: fever
+    priority: 92
+    answer_type: boolean
+    zh: 现在有发热吗？
+    en: Do you have fever now?
+urgency_rules:
+  - rule_id: ap_shock
+    if_all: ["sbp<90"]
+    urgency_floor: RESUS
+    disposition_floor: ICU
+  - rule_id: ap_urgent
+    if_all: ["complaint:abdominal_pain", "red_flag:worsening_pain"]
+    urgency_floor: URGENT
+    disposition_floor: WARD

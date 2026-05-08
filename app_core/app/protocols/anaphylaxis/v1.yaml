@@ -1,0 +1,51 @@
+protocol_id: anaphylaxis
+version: v1
+chief_complaint_aliases:
+  - anaphylaxis
+  - allergic reaction
+  - throat tightness
+  - 过敏反应
+  - 喉咙紧
+  - 过敏后呼吸困难
+trigger_keywords:
+  - hives
+  - lip swelling
+  - wheeze
+  - 荨麻疹
+  - 嘴唇肿
+  - 喘鸣
+red_flags:
+  - hypoxia
+  - breathing_difficulty
+required_slots:
+  - duration
+  - breathing_difficulty
+  - syncope
+questions:
+  - question_id: an_when
+    slot: duration
+    priority: 100
+    answer_type: text
+    zh: 过敏反应是从什么时候开始的？
+    en: When did the allergic reaction start?
+  - question_id: an_breath
+    slot: breathing_difficulty
+    priority: 96
+    answer_type: boolean
+    zh: 现在是否有呼吸困难或喉咙发紧？
+    en: Do you have breathing difficulty or throat tightness now?
+  - question_id: an_syncope
+    slot: syncope
+    priority: 92
+    answer_type: boolean
+    zh: 是否有头晕欲晕或晕厥？
+    en: Any near-fainting or fainting?
+urgency_rules:
+  - rule_id: an_hypoxia
+    if_all: ["spo2<94", "complaint:anaphylaxis"]
+    urgency_floor: RESUS
+    disposition_floor: ICU
+  - rule_id: an_breath_compromise
+    if_all: ["complaint:anaphylaxis", "red_flag:breathing_difficulty"]
+    urgency_floor: URGENT
+    disposition_floor: WARD

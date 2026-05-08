@@ -1,0 +1,73 @@
+protocol_id: labor
+version: v1
+chief_complaint_aliases:
+  - labor
+  - delivery
+  - giving birth
+  - pregnant with contractions
+  - 分娩
+  - 生小孩
+  - 宫缩
+  - 破水
+  - 羊水破了
+trigger_keywords:
+  - water broke
+  - contraction
+  - vaginal bleeding
+  - urge to push
+  - 见红
+  - 阴道出血
+  - 想用力
+red_flags:
+  - hypotension
+  - bleeding
+required_slots:
+  - duration
+  - water_broken
+  - contraction_interval
+  - vaginal_bleeding
+  - urge_to_push
+questions:
+  - question_id: lb_when
+    slot: duration
+    priority: 100
+    answer_type: text
+    zh: 产痛或不适是从什么时候开始的？
+    en: When did the labor symptoms start?
+  - question_id: lb_water
+    slot: water_broken
+    priority: 98
+    answer_type: boolean
+    zh: 现在是否已经破水？
+    en: Has your water broken?
+  - question_id: lb_interval
+    slot: contraction_interval
+    priority: 96
+    answer_type: text
+    zh: 目前宫缩大约几分钟一次？
+    en: About how many minutes between contractions now?
+  - question_id: lb_bleed
+    slot: vaginal_bleeding
+    priority: 94
+    answer_type: boolean
+    zh: 现在有阴道出血或见红增多吗？
+    en: Do you have active vaginal bleeding now?
+  - question_id: lb_push
+    slot: urge_to_push
+    priority: 92
+    answer_type: boolean
+    zh: 现在是否有明显想用力（想解便样）感觉？
+    en: Do you feel a strong urge to push now?
+urgency_rules:
+  - rule_id: lb_shock
+    if_all: ["sbp<90"]
+    urgency_floor: RESUS
+    disposition_floor: ICU
+  - rule_id: lb_bleed_urgent
+    if_all: ["red_flag:vaginal_bleeding", "complaint:labor"]
+    urgency_floor: URGENT
+    disposition_floor: WARD
+  - rule_id: lb_active_labor
+    if_all: ["red_flag:urge_to_push", "complaint:labor"]
+    urgency_floor: URGENT
+    disposition_floor: WARD

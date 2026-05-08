@@ -1,0 +1,65 @@
+protocol_id: trauma
+version: v1
+chief_complaint_aliases:
+  - trauma
+  - injury
+  - fracture
+  - fall
+  - 外伤
+  - 骨折
+  - 摔伤
+trigger_keywords:
+  - bleeding
+  - severe pain
+  - head injury
+  - 出血
+  - 受伤
+red_flags:
+  - hypotension
+  - breathing_difficulty
+required_slots:
+  - duration
+  - pain_score
+  - worsening_pain
+  - breathing_difficulty
+  - syncope
+questions:
+  - question_id: tr_when
+    slot: duration
+    priority: 100
+    answer_type: text
+    zh: 受伤是在什么时候发生的？
+    en: When did the injury happen?
+  - question_id: tr_pain
+    slot: pain_score
+    priority: 97
+    answer_type: number
+    zh: 现在疼痛评分 0-10 分大约是多少？
+    en: What is your pain score from 0 to 10 right now?
+  - question_id: tr_worse
+    slot: worsening_pain
+    priority: 95
+    answer_type: boolean
+    zh: 疼痛是否持续加重？
+    en: Is the pain worsening?
+  - question_id: tr_breath
+    slot: breathing_difficulty
+    priority: 90
+    answer_type: boolean
+    zh: 现在有呼吸困难吗？
+    en: Do you have breathing difficulty now?
+  - question_id: tr_syncope
+    slot: syncope
+    priority: 88
+    answer_type: boolean
+    zh: 受伤后有晕厥或差点晕倒吗？
+    en: Any fainting or near-fainting after the injury?
+urgency_rules:
+  - rule_id: tr_shock
+    if_all: ["sbp<90"]
+    urgency_floor: RESUS
+    disposition_floor: ICU
+  - rule_id: tr_resp_compromise
+    if_all: ["red_flag:breathing_difficulty", "complaint:trauma"]
+    urgency_floor: URGENT
+    disposition_floor: WARD

@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* PreTriage Clinical Design System */
+/* Light theme only - no dark mode for healthcare application */
+
+:root {
+  /* Clinical color variables */
+  --clinical-bg: #F9FAFB;
+  --clinical-card: #FFFFFF;
+  --clinical-text-primary: #111827;
+  --clinical-text-secondary: #4B5563;
+  --clinical-text-muted: #6B7280;
+  --clinical-border: #D1D5DB;
+  --medical-blue: #0C5BA3;
+  --medical-blue-dark: #094780;
+}
+
+body {
+  color: var(--clinical-text-primary);
+  background-color: var(--clinical-bg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Remove default focus outline, replace with accessible clinical style */
+*:focus-visible {
+  outline: 2px solid var(--medical-blue);
+  outline-offset: 2px;
+}
+
+/* Clinical button reset */
+button {
+  font-family: inherit;
+}
+
+/* Ensure inputs have clinical styling */
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+

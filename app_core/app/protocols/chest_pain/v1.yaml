@@ -1,0 +1,69 @@
+protocol_id: chest_pain
+version: v1
+chief_complaint_aliases:
+  - chest pain
+  - chest tightness
+  - chest pressure
+  - 胸痛
+  - 胸闷
+trigger_keywords:
+  - radiating pain
+  - diaphoresis
+  - exertional
+  - crushing
+  - 放射痛
+  - 冷汗
+red_flags:
+  - hypoxia
+  - hypotension
+  - syncope
+required_slots:
+  - duration
+  - worsening_pain
+  - breathing_difficulty
+  - radiating_pain
+  - syncope
+questions:
+  - question_id: cp_duration
+    slot: duration
+    priority: 100
+    answer_type: text
+    zh: 症状是从什么时候开始的？
+    en: When did the symptom start?
+  - question_id: cp_worsen
+    slot: worsening_pain
+    priority: 95
+    answer_type: boolean
+    zh: 与昨天相比现在是否明显加重？
+    en: Is the pain clearly worse than before?
+  - question_id: cp_dyspnea
+    slot: breathing_difficulty
+    priority: 90
+    answer_type: boolean
+    zh: 现在是否有呼吸困难？
+    en: Are you short of breath right now?
+  - question_id: cp_radiation
+    slot: radiating_pain
+    priority: 85
+    answer_type: boolean
+    zh: 疼痛是否放射到手臂、下颌或背部？
+    en: Does the pain spread to your arm, jaw, or back?
+  - question_id: cp_syncope
+    slot: syncope
+    priority: 80
+    answer_type: boolean
+    zh: 是否出现过晕厥或近乎晕厥？
+    en: Any fainting or near-fainting?
+urgency_rules:
+  - rule_id: cp_hypoxia
+    if_all: ["spo2<90"]
+    urgency_floor: RESUS
+    disposition_floor: ICU
+  - rule_id: cp_instability
+    if_all: ["sbp<90"]
+    urgency_floor: RESUS
+    disposition_floor: ICU
+  - rule_id: cp_syncope_high_risk
+    if_all: ["red_flag:syncope", "complaint:chest_pain"]
+    urgency_floor: URGENT
+    disposition_floor: WARD

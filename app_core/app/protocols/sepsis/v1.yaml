@@ -1,0 +1,41 @@
+protocol_id: sepsis
+version: v1
+chief_complaint_aliases:
+  - sepsis
+  - fever and chills
+  - confusion with fever
+  - 脓毒症
+  - 高热寒战
+trigger_keywords:
+  - rigors
+  - confusion
+  - hypotension
+  - 发冷发抖
+red_flags:
+  - hypotension
+  - altered_mental_status
+required_slots:
+  - duration
+  - fever
+questions:
+  - question_id: se_duration
+    slot: duration
+    priority: 100
+    answer_type: text
+    zh: 发热或不适症状持续多久了？
+    en: How long have the fever or systemic symptoms lasted?
+  - question_id: se_fever
+    slot: fever
+    priority: 95
+    answer_type: boolean
+    zh: 现在是否仍在发热？
+    en: Do you currently have fever?
+urgency_rules:
+  - rule_id: se_shock
+    if_all: ["sbp<90"]
+    urgency_floor: RESUS
+    disposition_floor: ICU
+  - rule_id: sepsis_high_risk
+    if_all: ["complaint:sepsis", "red_flag:fever"]
+    urgency_floor: URGENT
+    disposition_floor: WARD

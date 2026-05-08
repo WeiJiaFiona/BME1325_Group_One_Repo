@@ -1,0 +1,51 @@
+protocol_id: headache
+version: v1
+chief_complaint_aliases:
+  - headache
+  - severe headache
+  - 头痛
+  - 头很疼
+  - 剧烈头痛
+trigger_keywords:
+  - sudden severe
+  - worst headache
+  - neck stiffness
+  - sudden onset
+  - 突发
+  - 最严重头痛
+  - 颈项强直
+red_flags:
+  - syncope
+  - altered_mental_status
+required_slots:
+  - duration
+  - worsening_pain
+  - syncope
+questions:
+  - question_id: hd_when
+    slot: duration
+    priority: 100
+    answer_type: text
+    zh: 头痛是从什么时候开始的？
+    en: When did the headache start?
+  - question_id: hd_worse
+    slot: worsening_pain
+    priority: 96
+    answer_type: boolean
+    zh: 疼痛这段时间有在加重吗？
+    en: Has the headache been getting worse?
+  - question_id: hd_syncope
+    slot: syncope
+    priority: 92
+    answer_type: boolean
+    zh: 有晕厥、抽搐或意识模糊吗？
+    en: Any fainting, seizure, or confusion?
+urgency_rules:
+  - rule_id: hd_shock
+    if_all: ["sbp<90"]
+    urgency_floor: RESUS
+    disposition_floor: ICU
+  - rule_id: hd_neuro_risk
+    if_all: ["complaint:headache", "red_flag:syncope"]
+    urgency_floor: URGENT
+    disposition_floor: WARD

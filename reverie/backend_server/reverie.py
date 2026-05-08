@@ -21,6 +21,7 @@ from persona.persona_types.patient import *
 from persona.persona_types.bedside_nurse import *
 from persona.persona_types.triage_nurse import *
 from persona.persona_types.doctor import *
+from auto_memory_hooks import AutoMemoryHookManager
 import pathlib
 import uuid
 from pathlib import Path
@@ -124,7 +125,7 @@ class ReverieServer:
     # Interestingly, all simulations must be forked from some initial 
     # simulation, where the first simulation is "hand-crafted".
     self.fork_sim_code = fork_sim_code
-    fork_folder = f"{fs_storage}/{self.fork_sim_code}"
+    fork_folder = str(utils.ensure_seed_sim_storage(self.fork_sim_code))
 
     # <sim_code> indicates our current simulation. The first step here is to 
     # copy everything that's in <fork_sim_code>, but edit its 
@@ -206,12 +207,17 @@ class ReverieServer:
     # e.g., Maze("double_studio")
     self.maze = Maze(reverie_meta['maze_name'], fork_folder, sim_folder, self.seed)
 
-    # Compute tiles_per_step from walking speed for adaptive multi-tile movement
+    # Compute tiles_per_step from walking speed for adaptive multi-tile movement.
+    # The raw value is fine for headless batch runs, but the frontend UI only
+    # receives one target tile per step. If that target jumps many tiles, the
+    # browser interpolates a straight line and can visually cross walls.
     if self.travel_minutes_per_tile > 0:
       secs_per_tile = self.travel_minutes_per_tile * 60
       self.maze.tiles_per_step = max(1, int(self.sec_per_step / secs_per_tile))
     else:
       self.maze.tiles_per_step = max(1, int(self.sec_per_step))
+    self.default_tiles_per_step = self.maze.tiles_per_step
+    self.frontend_tiles_per_step = 1
     print(f"[Reverie] tiles_per_step = {self.maze.tiles_per_step} "
           f"(sec_per_step={self.sec_per_step}, "
           f"travel_min_per_tile={self.travel_minutes_per_tile:.4f})")
@@ -502,6 +508,38 @@ class ReverieServer:
         "curr_step_path": f"{fs_temp_storage}/curr_step.json",
       },
     )
+    self.auto_memory_hooks = AutoMemoryHookManager(
+      sim_code=self.sim_code,
+      start_time=self.start_time,
+      runtime_logger=self._runtime_log,
+    )
+    for persona in self.personas.values():
+      self._attach_auto_memory_hook_manager(persona)
+    existing_patients = [p for p in self.personas.values() if getattr(p, "role", None) == "Patient"]
+    self.auto_memory_hooks.sync_existing_patients(
+      existing_patients,
+      step=self.step,
+      sim_time=self.curr_time,
+    )
+
+  def _set_tiles_per_step_for_runtime(self, *, frontend_control: bool) -> None:
+    """Choose movement granularity for the current runtime mode."""
+    tiles_per_step = self.default_tiles_per_step
+    if frontend_control and not self.headless:
+      # The frontend only receives one target tile per step, so coarse
+      # backend jumps render as straight lines through walls. Keep UI mode at
+      # one-tile hops until waypoint playback exists on the browser side.
+      tiles_per_step = min(tiles_per_step, self.frontend_tiles_per_step)
+    self.maze.tiles_per_step = max(1, int(tiles_per_step))
+    self._runtime_log(
+      "tiles_per_step configured",
+      extra={
+        "frontend_control": frontend_control,
+        "headless": self.headless,
+        "default_tiles_per_step": self.default_tiles_per_step,
+        "active_tiles_per_step": self.maze.tiles_per_step,
+      },
+    )
 
   def _runtime_log(self, message, *, step=None, command=None, elapsed_seconds=None, extra=None):
     utils.log_runtime_event(
@@ -521,6 +559,10 @@ class ReverieServer:
       command=command,
       extra=extra,
     )
+
+  def _attach_auto_memory_hook_manager(self, persona):
+    if getattr(persona, "role", None) == "Patient":
+      persona.auto_memory_hook_manager = getattr(self, "auto_memory_hooks", None)
 
   def _is_in_assessment_queue(self, patient_name):
     return any(entry[1] == patient_name for entry in self.maze.injuries_zones["assessment_queue"])
@@ -1136,6 +1178,12 @@ class ReverieServer:
         },
       )
       return
+    if getattr(self, "auto_memory_hooks", None):
+      self.auto_memory_hooks.record_resource_bottlenecks(
+        self,
+        step=self.step,
+        sim_time=self.curr_time,
+      )
     self._runtime_log(
       "sim status snapshot written",
       extra={
@@ -1749,6 +1797,13 @@ class ReverieServer:
       temp_dict = curr_patient.data_collection_dict()
 
       self.data_collection[curr_patient.role][curr_patient.name] = temp_dict
+    if getattr(self, "auto_memory_hooks", None):
+      self.auto_memory_hooks.record_encounter_started(
+        curr_patient,
+        step=self.step,
+        sim_time=self.curr_time,
+        source="startup_fill",
+      )
 
   def _preload_waiting_room(self):
     """Spawn real patients into the waiting room at simulation start.
@@ -1783,6 +1838,13 @@ class ReverieServer:
 
       # Add to triage queue so triage nurse picks them up
       self.maze.triage_queue.append(new_patient.name)
+      if getattr(self, "auto_memory_hooks", None):
+        self.auto_memory_hooks.record_encounter_started(
+          new_patient,
+          step=self.step,
+          sim_time=self.curr_time,
+          source="preload_waiting_room",
+        )
 
     print(f"(reverie): Preloaded {count} real patients into the waiting room")
 
@@ -1990,6 +2052,13 @@ class ReverieServer:
 
           # Check for any patients who are leaving as assigned in the previous for loop
           for curr_persona in leaving_patient:
+            if getattr(curr_persona, "role", None) == "Patient" and getattr(self, "auto_memory_hooks", None):
+              self.auto_memory_hooks.record_encounter_closed(
+                curr_persona,
+                step=self.step,
+                sim_time=self.curr_time,
+                close_reason="leave_ed",
+              )
             curr_persona.leave_ed(self.maze, self.personas, sim_folder, self.data_collection)
             # Remove persona from runtime trackers
             self.personas.pop(curr_persona.name, None)
@@ -2019,6 +2088,7 @@ class ReverieServer:
             if persona_bucket is None:
               persona_bucket = persona.data_collection_dict()
               role_bucket[persona_name] = persona_bucket
+            persona.runtime_step = self.step
             pre_state = None
             pre_area = None
             if persona.role == "Patient":
@@ -2095,6 +2165,13 @@ class ReverieServer:
                 "zone": new_patient.scratch.injuries_zone,
               },
             )
+            if getattr(self, "auto_memory_hooks", None):
+              self.auto_memory_hooks.record_encounter_started(
+                new_patient,
+                step=self.step,
+                sim_time=self.curr_time,
+                source="runtime_arrival",
+              )
 
             # Reset counter 
             self.add_patient_threshold -= 1
@@ -2191,6 +2268,7 @@ class ReverieServer:
         'y' in frontend_ui.lower()
         and cmd_dir.exists()
     )
+    self._set_tiles_per_step_for_runtime(frontend_control=frontend_control)
     self._runtime_log(
       "command loop ready",
       extra={
@@ -2702,6 +2780,7 @@ class ReverieServer:
       temp_dict = curr_persona.data_collection_dict()
   
       self.data_collection[curr_persona.role][curr_persona.name] = temp_dict
+    self._attach_auto_memory_hook_manager(curr_persona)
 
     return self.personas[curr_persona.name], pos
 

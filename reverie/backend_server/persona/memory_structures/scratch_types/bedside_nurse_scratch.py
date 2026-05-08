@@ -17,9 +17,10 @@ class bedside_nurse_scratch(Scratch):
         if check_if_file_exists(f_saved): 
             scratch_load = json.load(open(f_saved))
 
-            self.occupied =  scratch_load["occupied"]
+            # Keep bootstrap loading tolerant to older scratch payloads.
+            self.occupied = scratch_load.get("occupied")
 
-            if scratch_load["time_to_next"]:
+            if scratch_load.get("time_to_next"):
                 self.time_to_next = datetime.datetime.strptime(
                     scratch_load["time_to_next"], "%B %d, %Y, %H:%M:%S"
                 )

@@ -193,7 +193,9 @@ class TestHomeRuntimeMessaging(TestCase):
             self.assertContains(response, "Command Console")
             self.assertContains(response, "sim_status.json")
             self.assertContains(response, "curr_step.json")
-            self.assertEqual(response.context["runtime_sources"]["status_step"], 0)
+            context = response.context or getattr(response, "context_data", None)
+            self.assertIsNotNone(context)
+            self.assertEqual(context["runtime_sources"]["status_step"], 0)
             self.assertContains(response, "run 10")
 
 

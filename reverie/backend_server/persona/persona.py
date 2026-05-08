@@ -4,6 +4,9 @@ import datetime
 import random
 import re
 import copy
+import json
+import shutil
+from pathlib import Path
 sys.path.append('../')
 
 from global_methods import *
@@ -77,6 +80,42 @@ REQUIRED_FIELDS = {
     "exempt_from_data_collection": False,
 }
 
+
+def _bootstrap_root(folder_path):
+  root = Path(folder_path)
+  if root.name == "bootstrap_memory":
+    return root
+  return root / "bootstrap_memory"
+
+
+def _ensure_bootstrap_memory_layout(folder_path):
+  """
+  Ensure the bootstrap memory tree exists and contains the minimal files needed
+  for persona load/save cycles, even after a partial Windows file operation.
+  """
+  bootstrap_root = _bootstrap_root(folder_path)
+  assoc_root = bootstrap_root / "associative_memory"
+
+  bootstrap_root.mkdir(parents=True, exist_ok=True)
+  assoc_root.mkdir(parents=True, exist_ok=True)
+
+  defaults = {
+    bootstrap_root / "spatial_memory.json": {},
+    assoc_root / "nodes.json": {},
+    assoc_root / "embeddings.json": {},
+    assoc_root / "kw_strength.json": {
+      "kw_strength_event": {},
+      "kw_strength_thought": {},
+    },
+  }
+
+  for path, payload in defaults.items():
+    if not path.exists():
+      with open(path, "w", encoding="utf-8") as outfile:
+        json.dump(payload, outfile)
+
+  return bootstrap_root
+
 def normalize_patient_scratch(raw):
     # legacy key fixes
     if "act_pronunciation" in raw and "act_pronunciatio" not in raw:
@@ -107,10 +146,11 @@ class Persona:
     # If there is already memory in folder_mem_saved, we load that. Otherwise,
     # we create new memory instances. 
     # <s_mem> is the persona's spatial memory. 
-    f_s_mem_saved = f"{folder_mem_saved}/bootstrap_memory/spatial_memory.json"
+    bootstrap_root = _ensure_bootstrap_memory_layout(folder_mem_saved)
+    f_s_mem_saved = str(bootstrap_root / "spatial_memory.json")
     self.s_mem = MemoryTree(f_s_mem_saved)
     # <s_mem> is the persona's associative memory. 
-    f_a_mem_saved = f"{folder_mem_saved}/bootstrap_memory/associative_memory"
+    f_a_mem_saved = str(bootstrap_root / "associative_memory")
     self.a_mem = AssociativeMemory(f_a_mem_saved)
 
     number = int(name.split(' ')[-1]) if name.split(' ')[-1].isnumeric() else 0
@@ -129,6 +169,7 @@ class Persona:
     OUTPUT: 
       None
     """
+    _ensure_bootstrap_memory_layout(save_folder)
     # Spatial memory contains a tree in a json format. 
     # e.g., {"double studio": 
     #         {"double studio": 
@@ -402,12 +443,17 @@ class Persona:
     new_scratch["curr_time"] =  curr_time.strftime("%B %d, %Y, %H:%M:%S")
     # Get folder locations
     persona_folder = f"{sim_folder}/personas/{new_scratch['name']}"
+    bootstrap_root = Path(persona_folder) / "bootstrap_memory"
+    template_root = Path("folder_templates") / f"{persona_role.lower()}_template"
 
     if "act_pronunciation" in new_scratch and "act_pronunciatio" not in new_scratch:
         new_scratch["act_pronunciatio"] = new_scratch.pop("act_pronunciation")
 
-    # Copy from the patient template folder into persona folder to keep structure
-    copyanything(f"folder_templates/{persona_role.lower()}_template", persona_folder + "/bootstrap_memory")
+    # Seed bootstrap memory from the template without deleting an existing
+    # partially-created tree. This is more reliable on Windows than rmtree+copy.
+    bootstrap_root.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(template_root, bootstrap_root, dirs_exist_ok=True)
+    _ensure_bootstrap_memory_layout(bootstrap_root)
 
     with open(f"{persona_folder}/bootstrap_memory/scratch.json", "w") as outfile:
       outfile.write(json.dumps(new_scratch, indent=2, default=str))

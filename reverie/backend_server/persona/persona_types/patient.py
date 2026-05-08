@@ -215,6 +215,13 @@ class Patient(Persona):
                     "threshold_minutes": float(self.boarding_timeout_minutes),
                 },
             )
+            memory_hook_manager = getattr(self, "auto_memory_hook_manager", None)
+            if memory_hook_manager is not None:
+                memory_hook_manager.record_boarding_timeout(
+                    self,
+                    step=int(getattr(self, "runtime_step", 0) or 0),
+                    sim_time=curr_time,
+                )
 
         # Generate if Patient should leave the ED right now
         if (
@@ -610,6 +617,16 @@ class Patient(Persona):
             self.scratch.state = "WAITING_FOR_TEST"
             self.scratch.next_room = "diagnostic room"
             self.queue_conversation_event(self.EVENT_TEST_ORDERED)
+            memory_hook_manager = getattr(self, "auto_memory_hook_manager", None)
+            if memory_hook_manager is not None:
+                memory_hook_manager.record_next_slot(
+                    self,
+                    step=int(getattr(self, "runtime_step", 0) or 0),
+                    sim_time=self.scratch.curr_time,
+                    slot_name="testing",
+                    owner_role="BedsideNurse",
+                    reason="doctor_ordered_test",
+                )
         else:
             # No test — enters WAITING_FOR_RESULT immediately, apply surge extra now
             self.scratch.testing_kind = None
@@ -621,6 +638,16 @@ class Patient(Persona):
                     max(self.scratch.disposition_ready_at or self.scratch.curr_time,
                         self.scratch.curr_time)
                     + timedelta(minutes=surge_extra)
+                )
+            memory_hook_manager = getattr(self, "auto_memory_hook_manager", None)
+            if memory_hook_manager is not None:
+                memory_hook_manager.record_next_slot(
+                    self,
+                    step=int(getattr(self, "runtime_step", 0) or 0),
+                    sim_time=self.scratch.curr_time,
+                    slot_name="disposition_review",
+                    owner_role="Doctor",
+                    reason="doctor_completed_initial_assessment_without_test",
                 )
 
         return True
@@ -668,6 +695,22 @@ class Patient(Persona):
                         "boarding_end": self.scratch.admission_boarding_end.strftime("%B %d, %Y, %H:%M:%S"),
                     },
                 )
+                memory_hook_manager = getattr(self, "auto_memory_hook_manager", None)
+                if memory_hook_manager is not None:
+                    memory_hook_manager.record_disposition_decided(
+                        self,
+                        step=int(getattr(self, "runtime_step", 0) or 0),
+                        sim_time=self.scratch.curr_time,
+                        disposition="admit",
+                    )
+                    memory_hook_manager.record_next_slot(
+                        self,
+                        step=int(getattr(self, "runtime_step", 0) or 0),
+                        sim_time=self.scratch.curr_time,
+                        slot_name="boarding",
+                        owner_role="BedsideNurse",
+                        reason="patient_admitted_to_hospital",
+                    )
                 return True
 
         if self.scratch.stage3_minutes is None:
@@ -686,6 +729,22 @@ class Patient(Persona):
             and random.random() <= self.post_discharge_linger_probability
         ):
             self._stay_after_discharge(maze)
+        memory_hook_manager = getattr(self, "auto_memory_hook_manager", None)
+        if memory_hook_manager is not None:
+            memory_hook_manager.record_disposition_decided(
+                self,
+                step=int(getattr(self, "runtime_step", 0) or 0),
+                sim_time=self.scratch.curr_time,
+                disposition="discharge",
+            )
+            memory_hook_manager.record_next_slot(
+                self,
+                step=int(getattr(self, "runtime_step", 0) or 0),
+                sim_time=self.scratch.curr_time,
+                slot_name="exit",
+                owner_role="Patient",
+                reason="patient_ready_for_exit",
+            )
 
         return True
 
@@ -700,6 +759,24 @@ class Patient(Persona):
 
                 self.scratch.state = "WAITING_FOR_NURSE"
                 self.mark_handoff()
+                memory_hook_manager = getattr(self, "auto_memory_hook_manager", None)
+                if memory_hook_manager is not None:
+                    memory_hook_manager.record_handoff_requested(
+                        self,
+                        step=int(getattr(self, "runtime_step", 0) or 0),
+                        sim_time=self.scratch.curr_time,
+                        from_role="TriageNurse",
+                        to_role="BedsideNurse",
+                        reason=f"transfer_to_{self.scratch.next_room or 'care_zone'}",
+                    )
+                    memory_hook_manager.record_next_slot(
+                        self,
+                        step=int(getattr(self, "runtime_step", 0) or 0),
+                        sim_time=self.scratch.curr_time,
+                        slot_name="bedside_transfer",
+                        owner_role="BedsideNurse",
+                        reason="triage_completed_waiting_for_bedside_transfer",
+                    )
 
                 self.scratch.next_step = "ed map:emergency department:waiting room:waiting room chair"
                 
@@ -724,6 +801,24 @@ class Patient(Persona):
                         max(self.scratch.initial_assessment_ready_at or self.scratch.curr_time,
                             self.scratch.curr_time)
                         + timedelta(minutes=surge_extra)
+                    )
+                memory_hook_manager = getattr(self, "auto_memory_hook_manager", None)
+                if memory_hook_manager is not None:
+                    memory_hook_manager.record_handoff_completed(
+                        self,
+                        step=int(getattr(self, "runtime_step", 0) or 0),
+                        sim_time=self.scratch.curr_time,
+                        from_role="TriageNurse",
+                        to_role="BedsideNurse",
+                        completion_note="patient_transferred_to_care_zone",
+                    )
+                    memory_hook_manager.record_next_slot(
+                        self,
+                        step=int(getattr(self, "runtime_step", 0) or 0),
+                        sim_time=self.scratch.curr_time,
+                        slot_name="doctor_first_assessment",
+                        owner_role="Doctor",
+                        reason="patient_arrived_in_bed_for_first_assessment",
                     )
 
         elif(other_persona.role == "Doctor"):

@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,38 @@ static_sim_code = ""
 debug = True
 
 runtime_trace_enabled = os.environ.get("EDSIM_RUNTIME_TRACE", "1").strip().lower() not in {"0", "false", "no"}
+
+
+def candidate_seed_sim_dirs(sim_code: str):
+    """Return likely locations for a seed sim across nearby repo snapshots."""
+    return [
+        STORAGE_ROOT / sim_code,
+        PROJECT_ROOT.parent / "week7" / "environment" / "frontend_server" / "storage" / sim_code,
+        PROJECT_ROOT.parent / "week6" / "week6_interface" / "frontend_server" / "storage" / sim_code,
+    ]
+
+
+def ensure_seed_sim_storage(sim_code: str) -> Path:
+    """
+    Ensure the requested seed simulation exists in week8 storage.
+
+    Week8 auto mode assumes `storage/ed_sim_n5` is present, but some local
+    snapshots only include it under week7/week6. In that case, bootstrap a local
+    copy so both frontend and backend can start consistently.
+    """
+    target = STORAGE_ROOT / sim_code
+    if target.exists():
+        return target
+
+    for candidate in candidate_seed_sim_dirs(sim_code)[1:]:
+        if candidate.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(candidate, target)
+            return target
+
+    raise FileNotFoundError(
+        f"Seed simulation '{sim_code}' was not found in week8/week7/week6 storage."
+    )
 
 
 def runtime_timestamp() -> str:
@@ -61,7 +94,12 @@ def log_runtime_event(message: str, *, sim_code=None, step=None, command=None, e
         elapsed_seconds=elapsed_seconds,
         extra=extra,
     )
-    print(f"{prefix} {message}")
+    try:
+        print(f"{prefix} {message}")
+    except (OSError, ValueError):
+        # Non-interactive Windows runs can transiently reject stdout writes.
+        # Logging should never terminate the simulation loop.
+        return
 
 
 @contextmanager

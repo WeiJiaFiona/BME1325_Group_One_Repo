@@ -88,6 +88,26 @@ def _config_from_env(base_config: Optional[dict] = None) -> dict:
 CONFIG_PATH = Path(__file__).resolve().parents[4] / 'openai_config.json'
 _FILE_CONFIG = _load_config_file()
 
+
+def _default_local_only_config() -> dict:
+    """Return a minimal config that enables offline-safe startup."""
+    return {
+        "client": "openai",
+        "model": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        "model-key": "",
+        "model-endpoint": os.environ.get("OPENAI_ENDPOINT", ""),
+        "model-api-version": os.environ.get("OPENAI_API_VERSION", ""),
+        "model-costs": {"input": 0.0, "output": 0.0},
+        "embeddings-client": "openai",
+        "embeddings": os.environ.get("EMBEDDINGS_MODEL", "text-embedding-3-small"),
+        "embeddings-key": "",
+        "embeddings-endpoint": os.environ.get("EMBEDDINGS_ENDPOINT", ""),
+        "embeddings-api-version": os.environ.get("EMBEDDINGS_API_VERSION", ""),
+        "embeddings-costs": {"input": 0.0, "output": 0.0},
+        "experiment-name": os.environ.get("EXPERIMENT_NAME", "edsim-offline"),
+        "cost-upperbound": float(os.environ.get("COST_UPPERBOUND", "100.0")),
+    }
+
 if any(os.environ.get(var) for var in (
     "OPENAI_KEY", "OPENAI_CLIENT", "OPENAI_MODEL", "OPENAI_ENDPOINT",
     "EMBEDDINGS_CLIENT", "EMBEDDINGS_MODEL", "EMBEDDINGS_KEY", "EMBEDDINGS_ENDPOINT",
@@ -96,9 +116,12 @@ if any(os.environ.get(var) for var in (
 elif _FILE_CONFIG:
     openai_config = _FILE_CONFIG
 else:
-    raise RuntimeError(
-        "No OpenAI credentials found. "
-        "Set OPENAI_KEY (and related env vars) or create openai_config.json."
+    openai_config = _default_local_only_config()
+    os.environ.setdefault("LLM_MODE", "local_only")
+    os.environ.setdefault("EMBEDDING_MODE", "local_only")
+    print(
+        "No OpenAI credentials found; starting in offline fallback mode "
+        "(LLM_MODE=local_only, EMBEDDING_MODE=local_only)."
     )
 
 def setup_client(type: str, config: dict):
@@ -156,11 +179,13 @@ _MODEL_ENDPOINT = openai_config.get("model-endpoint", "")
 _EMBEDDINGS_ENDPOINT = openai_config.get("embeddings-endpoint", "")
 _USE_START_ENDPOINT = _looks_like_start_endpoint(_MODEL_ENDPOINT)
 _FORCE_LOCAL_LLM = os.environ.get("USE_LOCAL_LLM", "").lower() in ("1", "true", "yes")
-_LLM_MODE = os.environ.get("LLM_MODE", "remote_only").strip().lower() or "remote_only"
+_DEFAULT_LLM_MODE = "remote_only" if openai_config.get("model-key") else "local_only"
+_LLM_MODE = os.environ.get("LLM_MODE", _DEFAULT_LLM_MODE).strip().lower() or _DEFAULT_LLM_MODE
 if _FORCE_LOCAL_LLM:
   _LLM_MODE = "local_only"
 _FORCE_LOCAL_EMBEDDINGS = os.environ.get("USE_LOCAL_EMBEDDINGS", "").lower() in ("1", "true", "yes")
-_EMBEDDING_MODE = os.environ.get("EMBEDDING_MODE", "hybrid").strip().lower() or "hybrid"
+_DEFAULT_EMBEDDING_MODE = "hybrid" if openai_config.get("embeddings-key") else "local_only"
+_EMBEDDING_MODE = os.environ.get("EMBEDDING_MODE", _DEFAULT_EMBEDDING_MODE).strip().lower() or _DEFAULT_EMBEDDING_MODE
 if _FORCE_LOCAL_EMBEDDINGS:
   _EMBEDDING_MODE = "local_only"
 _EMBEDDING_CACHE_ENABLED = os.environ.get("EMBEDDING_CACHE_ENABLED", "1").lower() not in ("0", "false", "no")
@@ -489,32 +514,40 @@ def _deterministic_local_embedding(text: str, dim: int = _LOCAL_EMBED_DIM):
     i += 1
   return vec
 
-if openai_config["client"] == "azure":
-  client = setup_client("azure", {
-      "endpoint": openai_config["model-endpoint"],
-      "key": openai_config["model-key"],
-      "api-version": openai_config["model-api-version"],
-  })
-elif openai_config["client"] == "openai":
-  client = setup_client("openai", {
-      "key": openai_config["model-key"],
-      "endpoint": openai_config.get("model-endpoint", ""),
-  })
+client = None
+embeddings_client = None
 
-if openai_config["embeddings-client"] == "azure":  
-  embeddings_client = setup_client("azure", {
-      "endpoint": openai_config["embeddings-endpoint"],
-      "key": openai_config["embeddings-key"],
-      "api-version": openai_config["embeddings-api-version"],
-      "timeout": _EMBEDDING_TIMEOUT_SECONDS,
-  })
-elif openai_config["embeddings-client"] == "openai":
-  embeddings_client = setup_client("openai", {
-      "key": openai_config["embeddings-key"],
-      "endpoint": openai_config.get("embeddings-endpoint", ""),
-      "timeout": _EMBEDDING_TIMEOUT_SECONDS,
-  })
-else:
+if openai_config.get("model-key"):
+  if openai_config["client"] == "azure":
+    client = setup_client("azure", {
+        "endpoint": openai_config["model-endpoint"],
+        "key": openai_config["model-key"],
+        "api-version": openai_config["model-api-version"],
+    })
+  elif openai_config["client"] == "openai":
+    client = setup_client("openai", {
+        "key": openai_config["model-key"],
+        "endpoint": openai_config.get("model-endpoint", ""),
+    })
+
+if openai_config.get("embeddings-key"):
+  if openai_config["embeddings-client"] == "azure":
+    embeddings_client = setup_client("azure", {
+        "endpoint": openai_config["embeddings-endpoint"],
+        "key": openai_config["embeddings-key"],
+        "api-version": openai_config["embeddings-api-version"],
+        "timeout": _EMBEDDING_TIMEOUT_SECONDS,
+    })
+  elif openai_config["embeddings-client"] == "openai":
+    embeddings_client = setup_client("openai", {
+        "key": openai_config["embeddings-key"],
+        "endpoint": openai_config.get("embeddings-endpoint", ""),
+        "timeout": _EMBEDDING_TIMEOUT_SECONDS,
+    })
+
+if openai_config["client"] not in {"azure", "openai"}:
+  raise ValueError("Invalid client")
+if openai_config["embeddings-client"] not in {"azure", "openai"}:
   raise ValueError("Invalid embeddings client")
 
 cost_logger = OpenAICostLogger_Singleton(

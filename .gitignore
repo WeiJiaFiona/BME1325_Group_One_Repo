@@ -179,6 +179,17 @@ storage/
 temp_storage/
 environment/frontend_server/compressed_storage/
 cost-logs/
+runtime_data/
+environment/frontend_server/storage/*
+!environment/frontend_server/storage/
+!environment/frontend_server/storage/ed_sim_n5/
+!environment/frontend_server/storage/ed_sim_n5/**
+analysis/scenario_regressions/*
+!analysis/scenario_regressions/20260423_103358/
+!analysis/scenario_regressions/20260423_103358/**
+verify_backend.out.log
+verify_backend.err.log
+*.mp4
 
 analysis/ctas_daily_metrics.csv
 analysis/patient_time_metrics.csv

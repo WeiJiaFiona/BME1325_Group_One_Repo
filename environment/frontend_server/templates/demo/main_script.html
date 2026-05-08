@@ -81,6 +81,31 @@
     document.getElementById("game-time-content").innerHTML =
         start_datetime.toLocaleString("en-US", datetime_options).replace(/,/, '');
 
+    function getFallbackLocation(data) {
+        const movement = data["movement"] || [0, 0];
+        return `Tile (${movement[0]}, ${movement[1]})`;
+    }
+
+    function parsePersonaStatus(data) {
+        const fallbackAction = "<em>No active task yet</em>";
+        const fallbackLocation = getFallbackLocation(data);
+        const rawDescription = ((data["description"] || "") + "").trim();
+        if (!rawDescription) {
+            return {
+                action: fallbackAction,
+                location: fallbackLocation
+            };
+        }
+
+        const segments = rawDescription.split("@");
+        const action = (segments[0] || "").trim() || fallbackAction;
+        const location = (segments.slice(1).join("@") || "").trim() || fallbackLocation;
+        return {
+            action: action,
+            location: location
+        };
+    }
+
     // ###########################################################################
     // ENGINE
     // ###########################################################################
@@ -327,7 +352,7 @@
                     movement_target[curr_persona_name] = [mx * tile_width, my * tile_width];
 
                     let pronunciatio_content = data["pronunciatio"] || "";
-                    let description_content = data["description"] || "";
+                    let personaStatus = parsePersonaStatus(data);
                     let chat_content_raw = data["chat"] || null;
                     let chat_content = chat_content_raw
                         ? chat_content_raw.map(([speaker, msg]) => speaker + ": " + msg + "<br>").join("")
@@ -339,8 +364,8 @@
                     initials = ((initials.shift()?.[1] || '') + (initials.pop()?.[1] || '')).toUpperCase();
                     curr_pronunciatio.setText(initials + ": " + pronunciatio_content);
                     document.getElementById("quick_emoji-" + curr_persona_name).innerHTML = pronunciatio_content;
-                    document.getElementById("current_action__" + curr_persona_name).innerHTML = description_content.split("@")[0];
-                    document.getElementById("target_address__" + curr_persona_name).innerHTML = description_content.split("@")[1];
+                    document.getElementById("current_action__" + curr_persona_name).innerHTML = personaStatus.action;
+                    document.getElementById("target_address__" + curr_persona_name).innerHTML = personaStatus.location;
                     document.getElementById("chat__" + curr_persona_name).innerHTML = chat_content;
                 }
 
@@ -667,13 +692,17 @@
     }
 
     	// Adds a new persona section when added
-	function addNewPersonaSection(newPersonaOriginal, newPersonaUnderscore, currentAction, location, conversation, newSectionTitle, newSectionContent) {
-		const personasContainer = document.getElementById('personas-container');
+    function addNewPersonaSection(newPersonaOriginal, newPersonaUnderscore, currentAction, location, conversation, newSectionTitle, newSectionContent) {
+        const personasContainer = document.getElementById('personas-container');
 
-		if (!personasContainer) {
-			console.error("Parent container 'personas-container' not found.");
-			return;
-		}
+        if (!personasContainer) {
+            console.error("Parent container 'personas-container' not found.");
+            return;
+        }
+
+        const initialAction = currentAction || "<em>Waiting for first update</em>";
+        const initialLocation = location || "<em>Not available yet</em>";
+        const initialConversation = conversation || "<em>None at the moment</em>";
 		else if(document.getElementById("current_action__" + newPersonaUnderscore)){
 			console.log("Container exists");
 			return;
@@ -695,9 +724,9 @@
                         </h2>
                     </div>
                     <div style="">
-                        <p style="font-size:1.2em"><strong>Current Action:</strong> <br><span id="current_action__${newPersonaUnderscore}"></span></p>
-                        <p style="font-size:1.2em"><strong>Location:</strong> <br><span id="target_address__${newPersonaUnderscore}"></span></p>
-                        <p style="font-size:1.2em"><strong>Current Conversation:</strong> <br><span id="chat__${newPersonaUnderscore}"></span></p>
+                        <p style="font-size:1.2em"><strong>Current Action:</strong> <br><span id="current_action__${newPersonaUnderscore}">${initialAction}</span></p>
+                        <p style="font-size:1.2em"><strong>Location:</strong> <br><span id="target_address__${newPersonaUnderscore}">${initialLocation}</span></p>
+                        <p style="font-size:1.2em"><strong>Current Conversation:</strong> <br><span id="chat__${newPersonaUnderscore}">${initialConversation}</span></p>
                     </div>
                 </div>
             </div>

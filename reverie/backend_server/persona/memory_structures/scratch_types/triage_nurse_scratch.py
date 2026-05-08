@@ -15,7 +15,10 @@ class triage_nurse_scratch(Scratch):
         if check_if_file_exists(f_saved): 
             scratch_load = json.load(open(f_saved))
 
-            self.chatting_patient =  scratch_load["chatting_patient"]
+            # Older seed/bootstrap scratch files may not carry this field.
+            # Default to None so auto-mode runs can continue instead of
+            # crashing on a KeyError during persona load.
+            self.chatting_patient = scratch_load.get("chatting_patient")
 
                 
     def save(self, out_json):

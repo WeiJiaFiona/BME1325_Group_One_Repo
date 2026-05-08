@@ -176,6 +176,8 @@ openai_config.json
 docker/*.log
 
 storage/
+!app_core/his/storage/
+!app_core/his/storage/**
 temp_storage/
 environment/frontend_server/compressed_storage/
 cost-logs/

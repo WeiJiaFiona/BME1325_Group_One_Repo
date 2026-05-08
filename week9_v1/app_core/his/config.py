@@ -16,6 +16,14 @@ EVENT_ENVELOPE_FIELDS = (
     "source",
     "payload",
 )
+POSTGRES_MIGRATION_SEQUENCE = (
+    "001_core_master_tables.sql",
+    "002_encounter_tables.sql",
+    "003_order_result_tables.sql",
+    "004_document_event_tables.sql",
+    "005_runtime_audit_tables.sql",
+    "006_seed_dev_reference.sql",
+)
 HIS_DB_BACKEND = os.getenv("HIS_DB_BACKEND", "sqlite_dev").strip() or "sqlite_dev"
 DEFAULT_SQLITE_DEV_PATH = os.getenv(
     "HIS_SQLITE_DEV_PATH",

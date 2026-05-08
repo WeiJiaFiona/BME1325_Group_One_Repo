@@ -1,6 +1,16 @@
 from pathlib import Path
 
-from app_core.his.config import EVENT_ENVELOPE_FIELDS, FROZEN_ROUTE_NAMES, generate_encounter_id, generate_patient_id
+from app_core.his.config import (
+    EVENT_ENVELOPE_FIELDS,
+    FROZEN_ROUTE_NAMES,
+    POSTGRES_MIGRATION_SEQUENCE,
+    generate_encounter_id,
+    generate_patient_id,
+)
+from app_core.his.storage import create_his_storage
+from app_core.his.schemas import EncounterRecord, PatientRecord
+from app_core.his.services.encounter_service import get_encounter, open_encounter
+from app_core.his.services.patient_registry_service import get_patient, register_patient
 from app_core.his.storage.sqlite_dev import SQLiteDevHisStorage
 
 
@@ -28,3 +38,20 @@ def test_contract_constants_are_frozen() -> None:
         "source",
         "payload",
     )
+    assert len(POSTGRES_MIGRATION_SEQUENCE) == 6
+
+
+def test_default_storage_factory_returns_sqlite_backend(tmp_path: Path) -> None:
+    storage = create_his_storage(backend="sqlite_dev", sqlite_path=tmp_path / "factory.sqlite3")
+
+    assert isinstance(storage, SQLiteDevHisStorage)
+
+
+def test_sqlite_dev_persists_patient_and_encounter(tmp_path: Path) -> None:
+    storage = SQLiteDevHisStorage(db_path=tmp_path / "persist.sqlite3")
+    storage.bootstrap()
+    patient = register_patient(PatientRecord(full_name="SQLite Patient"), storage=storage)
+    encounter = open_encounter(EncounterRecord(patient_id=patient.patient_id), storage=storage)
+
+    assert get_patient(patient.patient_id, storage=storage) == patient
+    assert get_encounter(encounter.encounter_id, storage=storage) == encounter

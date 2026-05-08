@@ -5,6 +5,7 @@ from .config import (
     HIS_DB_BACKEND,
     ID_PREFIX_ENCOUNTER,
     ID_PREFIX_PATIENT,
+    POSTGRES_MIGRATION_SEQUENCE,
     generate_encounter_id,
     generate_patient_id,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "HIS_DB_BACKEND",
     "ID_PREFIX_ENCOUNTER",
     "ID_PREFIX_PATIENT",
+    "POSTGRES_MIGRATION_SEQUENCE",
     "generate_encounter_id",
     "generate_patient_id",
 ]

@@ -11,3 +11,10 @@ def append_event_registry_entry(
     storage: HisStorage | None = None,
 ) -> EventRegistryEntry:
     return resolve_storage(storage).append_event(entry)
+
+
+def list_event_registry_entries(
+    encounter_id: str,
+    storage: HisStorage | None = None,
+) -> list[EventRegistryEntry]:
+    return resolve_storage(storage).list_events(encounter_id)

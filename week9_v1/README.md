@@ -202,17 +202,133 @@ week9_v1/
 - `week8_report.md`
 - `legacy_templates/main_script_old_dolores.html`
 
-## 3. 这份 README 与其他说明文件的关系
+## 3. 当前交接进度（Week 9 HIS / Developer B）
 
-本 README 是 `week9_v1/` 的统一入口说明，主要吸收并整合了两份说明文件的信息：
+这一部分用于 Week 9 HIS 并行开发的交接，重点说明：
 
-- `week8_directory_audit.md`
-  - 负责解释 week8 原始目录的组成、重要代码、缓存、测试与冗余文档
-- `week9_cleanup_compare.md`
-  - 负责解释清理前后保留了什么、归档了什么、为什么这样整理
+- Developer A 的 HIS substrate 目前在本目录中已 fetch 到什么程度
+- Developer B 已经补齐了哪些占位与验证框架
+- 还有哪些关键功能尚未真正落地
 
-如果你需要：
+### 3.1 已完成的交接基础
 
-- 看“原始 week8 为什么显得杂”，优先读 `week8_directory_audit.md`
-- 看“week9_v1 为什么这样保留与归档”，优先读 `week9_cleanup_compare.md`
-- 看“现在这份干净版本能做什么、目录怎么理解”，优先读本 README
+- 已从 `weijiafiona/week9` 分支的 `week9_v1/` 路径 fetch Developer A 当前上传内容，并在本地整理为可继续开发的工作区。
+- 已补入 `app_core/his/` 基础目录，包含：
+  - `schemas/`
+  - `services/`
+  - `auth/`
+  - `exchange/`
+  - `projections/`
+  - `adapters/`
+- 已补入 A 侧冻结材料与最小 gate 参考：
+  - `docs/architecture/week9_his_contract_freeze_v1.md`
+  - `sql/postgres/001_core_master_tables.sql`
+  - `sql/postgres/002_encounter_tables.sql`
+  - `sql/postgres/003_order_result_tables.sql`
+
+### 3.2 Developer B 当前已完成内容
+
+#### 3.2.1 Adapter 占位
+
+- `app_core/his/adapters/memory_adapter.py`
+  - 已建立 Memory v1 -> HIS 的目标映射计划
+  - 已明确：
+    - `MemoryItem -> memory_events / event_registry`
+    - `CurrentEncounterSummary -> current_encounter_summaries`
+    - `HandoffMemorySnapshot -> handoff_snapshots / clinical_documents`
+    - replay export -> `replay_exports`
+  - 当前仍为占位实现，核心函数尚未接入真实 HIS service 写入
+
+- `app_core/his/adapters/contract_adapter.py`
+  - 已建立 contract 对齐常量与字段映射说明
+  - 已冻结：
+    - `patient_id`
+    - `encounter_id`
+    - `CTAS`
+    - `zone`
+    - `event envelope`
+    - route names
+  - 当前仍为占位实现，尚未生成真实对外 payload
+
+#### 3.2.2 Field Mapping 文档
+
+- 已新增：
+  - `docs/architecture/week9_memory_to_his_field_mapping.md`
+- 该文档已经说明：
+  - Memory v1 三类核心对象如何映射到 HIS 目标表
+  - 哪些字段必须走 A 的 service boundary
+  - 哪些内容仍然被 `storage/base.py` gate 阻塞
+
+#### 3.2.3 测试脚手架
+
+- 已新增 B 侧测试文件：
+  - `tests_his/test_memory_upgrade_path.py`
+  - `tests_his/test_contract_alignment.py`
+  - `tests_his/test_his_user_flow_integration.py`
+  - `tests_his/test_handoff_summary_connectivity.py`
+  - `tests_his/test_timeline_export.py`
+  - `tests_his/test_stemi_golden_path_smoke.py`
+
+- 当前这些测试的状态是：
+  - 一部分用于校验 frozen 常量、目标表名和占位计划是否存在
+  - 真正依赖 workflow / storage / persistence 的测试仍未落地
+  - `test_his_user_flow_integration.py` 会因 `app_core/his/storage/base.py` 尚未到位而跳过
+
+#### 3.2.4 Smoke / Golden Path 规划脚本
+
+- 已新增：
+  - `scripts/run_his_contract_smoke.py`
+  - `scripts/run_his_timeline_export_smoke.py`
+  - `scripts/run_his_stemi_golden_path.py`
+
+- 当前作用：
+  - 固定 contract smoke 的检查面
+  - 固定 timeline export 的预期组成
+  - 固定 STEMI golden-path 的主链路阶段
+
+- 当前限制：
+  - 这些脚本仍属于 planning / placeholder 层
+  - 尚未连到真实 HIS write path
+
+### 3.3 当前尚未落实的关键功能
+
+以下内容仍未进入“真实实现”阶段：
+
+- `memory_adapter.py` 的正式写入逻辑
+- `contract_adapter.py` 的真实 payload / envelope 生成逻辑
+- `app_core/app/api_v1.py` 中 user-mode -> HIS service 的关键写路径
+- summary / handoff / timeline 的正式 HIS 集成
+- contract alignment 的真实 payload 级验证
+- STEMI integrated smoke 的真实运行链路
+
+### 3.4 当前阻塞点
+
+按 `week9_his_developer_B_spec_v2.md` 与 `week9_his_merge_protocol_v2.md` 的要求，Developer B 深集成前需要 A 提供最小 gate。
+
+当前已经具备：
+
+- `schemas/*`
+- `services/*`
+- `sql/postgres/001~003.sql`
+- contract freeze 文档
+
+当前仍缺：
+
+- `app_core/his/storage/base.py`
+
+因此当前阶段最合理的状态是：
+
+- B 的文档、adapter scaffold、tests scaffold、smoke scaffold 已搭好
+- 真正的 workflow integration 仍需等待 storage/service 写路径进一步稳定
+
+### 3.5 交接建议
+
+如果下一位开发者继续推进 Developer B 任务，建议按下面顺序继续：
+
+1. 确认 A 是否已经补齐 `app_core/his/storage/base.py`
+2. 将 `memory_adapter.py` 从占位改为真实映射实现
+3. 将 `contract_adapter.py` 从常量层改为真实 contract payload 生成层
+4. 在 `app_core/app/api_v1.py` 的 user-mode checkpoint 中接入 HIS services
+5. 完成 summary / handoff / timeline integration
+6. 把 `tests_his/` 从 placeholder 断言升级为真实写路径验证
+7. 最后跑 contract smoke 与 STEMI golden-path smoke

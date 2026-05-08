@@ -19,16 +19,22 @@ EVENT_TYPES = {
     "patient_deterioration",
     "resource_bottleneck",
     "encounter_closed",
+    "next_slot",
 }
 
 
 CHECKPOINTS = {
+    "encounter_started",
     "post_triage",
     "doctor_assessment_start",
     "doctor_assessment_checkpoint",
     "test_result_ready",
+    "resource_bottleneck",
+    "boarding_timeout",
     "handoff_requested",
     "handoff_completed",
+    "encounter_closed",
+    "next_slot",
     "replay_export",
 }
 

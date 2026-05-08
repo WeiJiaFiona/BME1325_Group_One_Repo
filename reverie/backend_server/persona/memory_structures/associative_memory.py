@@ -3,8 +3,18 @@ sys.path.append('../../')
 
 import json
 import datetime
+import os
 
 from global_methods import *
+
+
+def _load_json_or_default(path, default):
+  """Load JSON if present and valid; otherwise return a deep-ish default copy."""
+  try:
+    with open(path, encoding="utf-8") as f:
+      return json.load(f)
+  except (FileNotFoundError, json.JSONDecodeError, OSError):
+    return json.loads(json.dumps(default))
 
 
 class ConceptNode: 
@@ -40,6 +50,7 @@ class ConceptNode:
 
 class AssociativeMemory: 
   def __init__(self, f_saved): 
+    os.makedirs(f_saved, exist_ok=True)
     self.id_to_node = dict()
 
     self.seq_event = []
@@ -53,9 +64,9 @@ class AssociativeMemory:
     self.kw_strength_event = dict()
     self.kw_strength_thought = dict()
 
-    self.embeddings = json.load(open(f_saved + "/embeddings.json"))
+    self.embeddings = _load_json_or_default(f_saved + "/embeddings.json", {})
 
-    nodes_load = json.load(open(f_saved + "/nodes.json"))
+    nodes_load = _load_json_or_default(f_saved + "/nodes.json", {})
     for count in range(len(nodes_load.keys())): 
       node_id = f"node_{str(count+1)}"
       node_details = nodes_load[node_id]
@@ -93,7 +104,13 @@ class AssociativeMemory:
         self.add_thought(created, expiration, s, p, o, 
                    description, keywords, poignancy, embedding_pair, filling)
 
-    kw_strength_load = json.load(open(f_saved + "/kw_strength.json"))
+    kw_strength_load = _load_json_or_default(
+      f_saved + "/kw_strength.json",
+      {
+        "kw_strength_event": {},
+        "kw_strength_thought": {},
+      },
+    )
     if kw_strength_load["kw_strength_event"]: 
       self.kw_strength_event = kw_strength_load["kw_strength_event"]
     if kw_strength_load["kw_strength_thought"]: 
@@ -101,6 +118,7 @@ class AssociativeMemory:
 
     
   def save(self, out_json): 
+    os.makedirs(out_json, exist_ok=True)
     r = dict()
     for count in range(len(self.id_to_node.keys()), 0, -1): 
       node_id = f"node_{str(count)}"

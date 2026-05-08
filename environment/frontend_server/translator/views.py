@@ -135,6 +135,31 @@ def _resolve_backend_dir() -> Path:
     return candidate
 
 
+def _candidate_seed_sim_dirs(sim_code: str) -> list[Path]:
+    return [
+        STORAGE_ROOT / sim_code,
+        PROJECT_ROOT.parent / "week7" / "environment" / "frontend_server" / "storage" / sim_code,
+        PROJECT_ROOT.parent / "week6" / "week6_interface" / "frontend_server" / "storage" / sim_code,
+    ]
+
+
+def _ensure_seed_sim_storage(sim_code: str) -> Path:
+    target = STORAGE_ROOT / sim_code
+    if target.exists():
+        return target
+
+    for candidate in _candidate_seed_sim_dirs(sim_code)[1:]:
+        if candidate.exists():
+            import shutil
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(candidate, target)
+            return target
+
+    raise FileNotFoundError(
+        f"Seed simulation `{sim_code}` was not found in week8/week7/week6 storage."
+    )
+
+
 def _list_running_reverie_processes(backend_dir: Path) -> list[int]:
     backend_dir_str = str(backend_dir.resolve()).lower()
     running = []
@@ -986,6 +1011,7 @@ def save_simulation_settings(request):
         payload = json.loads(request.body)
 
         sim_code = "ed_sim_n5"
+        _ensure_seed_sim_storage(sim_code)
 
         meta_path = _storage_path(sim_code, "reverie", "meta.json")
 

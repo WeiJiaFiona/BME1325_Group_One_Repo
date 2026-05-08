@@ -158,6 +158,31 @@
 		return nextValue;
 	}
 
+	function getFallbackLocation(movementInfo) {
+		const movement = movementInfo["movement"] || [0, 0];
+		return `Tile (${movement[0]}, ${movement[1]})`;
+	}
+
+	function parsePersonaStatus(movementInfo) {
+		const fallbackAction = "<em>No active task yet</em>";
+		const fallbackLocation = getFallbackLocation(movementInfo);
+		const rawDescription = ((movementInfo["description"] || "") + "").trim();
+		if (!rawDescription) {
+			return {
+				action: fallbackAction,
+				location: fallbackLocation
+			};
+		}
+
+		const segments = rawDescription.split("@");
+		const action = (segments[0] || "").trim() || fallbackAction;
+		const location = (segments.slice(1).join("@") || "").trim() || fallbackLocation;
+		return {
+			action: action,
+			location: location
+		};
+	}
+
 	function prepareExecutionTargets() {
 		let farthest_pixels = 0;
 		movement_target = {};
@@ -620,19 +645,19 @@
 			}
 	        let curr_persona_name_os = curr_persona_name.replace(/ /g,"_");
 
-	        let description_content = execute_movement["persona"][curr_persona_name]["description"];
+	        let movementInfo = execute_movement["persona"][curr_persona_name];
+	        let personaStatus = parsePersonaStatus(movementInfo);
 	        let chat_content = ""
 
-	        if (execute_movement["persona"][curr_persona_name]["chat"] != null ){
-		        for (let j=0; j<execute_movement["persona"][curr_persona_name]["chat"].length; j++) { 
-		        	chat_content += execute_movement["persona"][curr_persona_name]["chat"][j][0] + ": " + execute_movement["persona"][curr_persona_name]["chat"][j][1] + "<br>"
+	        if (movementInfo["chat"] != null ){
+		        for (let j=0; j<movementInfo["chat"].length; j++) { 
+		        	chat_content += movementInfo["chat"][j][0] + ": " + movementInfo["chat"][j][1] + "<br>"
 		        }
 		      } else {
 		      	chat_content = "<em>None at the moment</em>"
 		      }
-	        // action_description += description_content + "<br>";
-	        document.getElementById("current_action__"+curr_persona_name_os).innerHTML = description_content.split("@")[0];
-	        document.getElementById("target_address__"+curr_persona_name_os).innerHTML = description_content.split("@")[1];
+	        document.getElementById("current_action__"+curr_persona_name_os).innerHTML = personaStatus.action;
+	        document.getElementById("target_address__"+curr_persona_name_os).innerHTML = personaStatus.location;
 	        document.getElementById("chat__"+curr_persona_name_os).innerHTML = chat_content;
 	      }
 	    }
@@ -675,6 +700,10 @@
 			return;
 		}
 
+		const initialAction = currentAction || "<em>Waiting for first update</em>";
+		const initialLocation = location || "<em>Not available yet</em>";
+		const initialConversation = conversation || "<em>None at the moment</em>";
+
         let image_url = null;
         // Fetch personas image
         fetch(`/character_image/?url=assets/characters/profile/Patient_2.png`)
@@ -700,9 +729,9 @@
                         </h2>
                     </div>
                     <div style="">
-                        <p style="font-size:1.2em"><strong>Current Action:</strong> <br><span id="current_action__${p_name_os}"></span></p>
-                        <p style="font-size:1.2em"><strong>Location:</strong> <br><span id="target_address__${p_name_os}"></span></p>
-                        <p style="font-size:1.2em"><strong>Current Conversation:</strong> <br><span id="chat__${p_name_os}"></span></p>
+                        <p style="font-size:1.2em"><strong>Current Action:</strong> <br><span id="current_action__${p_name_os}">${initialAction}</span></p>
+                        <p style="font-size:1.2em"><strong>Location:</strong> <br><span id="target_address__${p_name_os}">${initialLocation}</span></p>
+                        <p style="font-size:1.2em"><strong>Current Conversation:</strong> <br><span id="chat__${p_name_os}">${initialConversation}</span></p>
                     </div>
                 </div>
             </div>

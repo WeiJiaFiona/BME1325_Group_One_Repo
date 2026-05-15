@@ -14,13 +14,13 @@
         <div id="viz-main-column" style="{% if effective_ui_mode == 'user' %}width:72%;{% else %}width:72%;{% endif %}">
             <div id="game-container" style="text-align: center; min-height: 460px;"></div>
             <div id="role-legend" style="display:flex; gap:14px; flex-wrap:wrap; justify-content:center; margin-top:8px; font-size:12px; color:#333;">
-                <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2f6fed;margin-right:6px;"></span>Doctor</span>
-                <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f39c12;margin-right:6px;"></span>Triage Nurse</span>
+                <span><img src="{% static 'assets/characters/profile/Doctor_1.png' %}" alt="Doctor" style="width:18px;height:18px;margin-right:6px;vertical-align:middle;">Doctor</span>
+                <span><img src="{% static 'assets/characters/profile/Triage_Nurse_1.png' %}" alt="Triage Nurse" style="width:18px;height:18px;margin-right:6px;vertical-align:middle;">Triage Nurse</span>
                 {% if effective_ui_mode == 'user' %}
-                <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#7b8cff;margin-right:6px;"></span>Calling Nurse</span>
+                <span><img src="{% static 'assets/characters/profile/Triage_Nurse_1.png' %}" alt="Calling Nurse" style="width:18px;height:18px;margin-right:6px;vertical-align:middle;">Calling Nurse</span>
                 {% endif %}
-                <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#27ae60;margin-right:6px;"></span>Bed Nurse</span>
-                <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#7f8c8d;margin-right:6px;"></span>Patient</span>
+                <span><img src="{% static 'assets/characters/profile/Bedside_Nurse_1.png' %}" alt="Bed Nurse" style="width:18px;height:18px;margin-right:6px;vertical-align:middle;">Bed Nurse</span>
+                <span><img src="{% static 'assets/characters/profile/Patient_1.png' %}" alt="Patient" style="width:18px;height:18px;margin-right:6px;vertical-align:middle;">Patient</span>
             </div>
         </div>
         {% include 'home/panels/user_panel.html' %}
@@ -119,15 +119,20 @@
                 <strong>Command Console</strong>
             </div>
             <div style="margin-top:8px; padding:10px 12px; background:#f7fbff; border:1px solid #cfe5ff; border-radius:8px; color:#234; font-size:13px; line-height:1.5;">
-                Main map playback still follows the baseline <code>step -&gt; movement/environment -&gt; execute</code> chain.
+                Auto-mode map playback follows <code>render snapshot -&gt; wait for runtime progress -&gt; consume movement/&lt;step&gt;</code>.
                 Primary runtime status lives in <code>sim_status.json</code> on <a href="/live_dashboard">live_dashboard</a>.
-                <code>curr_step.json</code> is only a pointer and startup handshake signal.
+                <code>curr_step.json</code> is not the live progress source; it is only a pointer and startup handshake signal.
                 {% if runtime_sources %}
-                <span style="display:block; margin-top:6px; color:#556;">
+                <span id="runtime-sync-summary" style="display:block; margin-top:6px; color:#556;">
+                    Render step {{ render_step|default:"--" }},
+                    playback step {{ playback_step|default:"--" }},
                     Status step {{ runtime_sources.status_step|default:"--" }},
                     Pointer {{ runtime_sources.curr_step_pointer|default:"--" }},
                     latest movement {{ runtime_sources.latest_movement_step|default:"--" }},
                     latest environment {{ runtime_sources.latest_environment_step|default:"--" }}.
+                </span>
+                <span id="runtime-sync-waiting" style="display:block; margin-top:4px; color:#637287;">
+                    Waiting for backend progress when latest movement is behind the next playback step.
                 </span>
                 {% endif %}
             </div>

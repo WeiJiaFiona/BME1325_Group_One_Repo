@@ -102,6 +102,71 @@ def _atomic_write_json(path, data, indent=2, retries=5, retry_delay=0.05):
       pass
     raise
 
+
+def _normalize_tile_coordinate(tile):
+  if not isinstance(tile, (list, tuple)) or len(tile) != 2:
+    return None
+  try:
+    return (int(tile[0]), int(tile[1]))
+  except (TypeError, ValueError):
+    return None
+
+
+def _path_is_adjacent(path_tiles):
+  for idx in range(1, len(path_tiles)):
+    prev_tile = path_tiles[idx - 1]
+    curr_tile = path_tiles[idx]
+    if abs(prev_tile[0] - curr_tile[0]) + abs(prev_tile[1] - curr_tile[1]) != 1:
+      return False
+  return True
+
+
+def _path_is_collision_free(collision_maze, path_tiles):
+  if not collision_maze:
+    return False
+  max_y = len(collision_maze)
+  max_x = len(collision_maze[0]) if max_y else 0
+  for tile_x, tile_y in path_tiles:
+    if tile_y < 0 or tile_y >= max_y or tile_x < 0 or tile_x >= max_x:
+      return False
+    if collision_maze[tile_y][tile_x] != 0:
+      return False
+  return True
+
+
+def _build_safe_movement_path(collision_maze, start_tile, end_tile):
+  start = _normalize_tile_coordinate(start_tile)
+  end = _normalize_tile_coordinate(end_tile)
+  if start is None or end is None:
+    return []
+  if start == end:
+    return [[start[0], start[1]]]
+
+  try:
+    from path_finder import path_finder as _path_finder
+
+    raw_path = _path_finder(collision_maze, start, end, "#")
+  except Exception:
+    raw_path = []
+
+  normalized = []
+  for tile in raw_path or []:
+    coord = _normalize_tile_coordinate(tile)
+    if coord is None:
+      continue
+    if not normalized or normalized[-1] != coord:
+      normalized.append(coord)
+
+  if not normalized:
+    return []
+  if normalized[0] != start or normalized[-1] != end:
+    return []
+  if not _path_is_adjacent(normalized):
+    return []
+  if not _path_is_collision_free(collision_maze, normalized):
+    return []
+  return [[tile_x, tile_y] for tile_x, tile_y in normalized]
+
 ##############################################################################
 #                                  REVERIE                                   #
 ##############################################################################
@@ -2117,6 +2182,13 @@ class ReverieServer:
                   travel_area[pre_area] = travel_area.get(pre_area, 0) + travel_minutes
             movements["persona"][persona_name] = {}
             movements["persona"][persona_name]["movement"] = next_tile
+            movement_path = _build_safe_movement_path(
+              self.maze.collision_maze,
+              tile_entry,
+              next_tile,
+            )
+            movements["persona"][persona_name]["movement_path"] = movement_path
+            movements["persona"][persona_name]["path_length"] = max(0, len(movement_path) - 1)
             movements["persona"][persona_name]["pronunciatio"] = pronunciatio
             movements["persona"][persona_name]["description"] = description
             movements["persona"][persona_name]["chat"] = (persona
@@ -2144,6 +2216,8 @@ class ReverieServer:
             # Add to this steps movement dict so that frontend can see it
             movements["persona"][new_patient.name] = {}
             movements["persona"][new_patient.name]["movement"] = curr_tile
+            movements["persona"][new_patient.name]["movement_path"] = [[curr_tile[0], curr_tile[1]]]
+            movements["persona"][new_patient.name]["path_length"] = 0
             movements["persona"][new_patient.name]["pronunciatio"] = ""
             movements["persona"][new_patient.name]["description"] = ""
             movements["persona"][new_patient.name]["chat"] = (new_patient.scratch.chat)
@@ -2323,7 +2397,9 @@ class ReverieServer:
 
             cmd_path = cmd_files[0]
             try:
-                with open(cmd_path, encoding="utf-8") as f:
+                # Accept UTF-8 with/without BOM so commands from PowerShell
+                # and browser writers are both consumable.
+                with open(cmd_path, encoding="utf-8-sig") as f:
                     payload = json.load(f)
                 sim_command = payload.get("command", "").strip()
                 cmd_id = payload.get("id", cmd_path.stem)

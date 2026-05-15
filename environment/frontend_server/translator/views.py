@@ -2,6 +2,7 @@ import os
 import string
 import random
 import json
+import shutil
 from os import listdir
 import os
 
@@ -69,11 +70,57 @@ def _backend_mode() -> str:
     return mode if mode in {"auto", "user"} else "auto"
 
 
+def _test_mode_enabled() -> bool:
+    return str(os.environ.get("EDSIM_TEST_MODE", "")).strip() == "1"
+
+
+def _effective_backend_mode(request) -> str:
+    mode = _backend_mode()
+    if not _test_mode_enabled():
+        return mode
+    override = str(request.GET.get("__test_backend_mode", "")).strip().lower()
+    if override in {"auto", "user"}:
+        return override
+    return mode
+
+
+def _browser_fixture_root() -> Path:
+    return PROJECT_ROOT / "tests" / "frontend" / "fixtures" / "phaser_smoke"
+
+
+_SIM_CODE_ALIAS = {
+    "curr_simm": "curr_sim",
+}
+
+
+def _normalize_sim_code(sim_code: Optional[str]) -> Optional[str]:
+    if not sim_code:
+        return sim_code
+    raw = str(sim_code).strip()
+    if not raw:
+        return raw
+    canonical = _SIM_CODE_ALIAS.get(raw, raw)
+
+    # Prefer canonical code when alias points to a non-existent folder.
+    alias_path = STORAGE_ROOT / raw
+    canonical_path = STORAGE_ROOT / canonical
+    if raw != canonical:
+        if canonical_path.exists() and not alias_path.exists():
+            return canonical
+    return canonical
+
+
 def _current_sim_code(default: Optional[str] = None) -> Optional[str]:
     try:
         with open(_temp_path("curr_sim_code.json"), encoding="utf-8") as f:
             payload = json.load(f)
-        return payload.get("sim_code") or default
+        sim_code = _normalize_sim_code(payload.get("sim_code") or default)
+        # Self-heal stale aliases persisted by previous sessions.
+        if payload.get("sim_code") != sim_code and sim_code:
+            payload["sim_code"] = sim_code
+            with open(_temp_path("curr_sim_code.json"), "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+        return sim_code
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return default
 
@@ -129,6 +176,135 @@ def _list_running_reverie_processes(backend_dir: Path) -> list[int]:
         if backend_dir_str in normalized_cmd or cwd == backend_dir_str:
             running.append(proc.info["pid"])
     return running
+
+
+def _list_pending_command_files() -> list[Path]:
+    cmd_dir = Path(_temp_path("commands"))
+    if not cmd_dir.exists():
+        return []
+    return sorted(cmd_dir.glob("cmd_*.json"))
+
+
+def _read_last_output_timestamp() -> Optional[str]:
+    out_file = Path(_temp_path("sim_output.json"))
+    if not out_file.exists():
+        return None
+    try:
+        payload = json.loads(out_file.read_text(encoding="utf-8"))
+        outputs = payload.get("outputs", [])
+        if not outputs:
+            return None
+        return outputs[-1].get("timestamp")
+    except Exception:
+        return None
+
+
+def _seconds_since_iso(timestamp: Optional[str]) -> Optional[float]:
+    if not timestamp:
+        return None
+    try:
+        normalized = str(timestamp).replace("Z", "+00:00")
+        dt = datetime.datetime.fromisoformat(normalized)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        return max(0.0, (datetime.datetime.now(datetime.timezone.utc) - dt).total_seconds())
+    except Exception:
+        return None
+
+
+def _runtime_backend_health(sim_code: Optional[str], backend_dir: Optional[Path] = None) -> dict:
+    if backend_dir is None:
+        backend_dir = _resolve_backend_dir()
+    running_pids = _list_running_reverie_processes(backend_dir) if backend_dir.exists() else []
+    pending_commands = _list_pending_command_files()
+    status_path = Path(_storage_path(sim_code, "sim_status.json")) if sim_code else None
+    movement_steps = _list_numeric_step_files(_storage_path(sim_code, "movement")) if sim_code else []
+    latest_movement_step = movement_steps[-1] if movement_steps else None
+    curr_step_pointer = _read_curr_step_pointer()
+    last_progress_timestamp = None
+    if status_path and status_path.exists():
+        last_progress_timestamp = datetime.datetime.fromtimestamp(
+            status_path.stat().st_mtime, datetime.timezone.utc
+        ).isoformat()
+
+    command_ids = []
+    for cmd_file in pending_commands:
+        try:
+            payload = json.loads(cmd_file.read_text(encoding="utf-8"))
+            command_ids.append(str(payload.get("id") or cmd_file.stem))
+        except Exception:
+            command_ids.append(cmd_file.stem)
+
+    backend_alive = bool(running_pids)
+    progress_age_seconds = _seconds_since_iso(last_progress_timestamp)
+    pointer_ahead_of_movement = (
+        curr_step_pointer is not None
+        and latest_movement_step is not None
+        and curr_step_pointer > (latest_movement_step + 1)
+    )
+    stalled = bool(command_ids) and (
+        (not backend_alive)
+        or (progress_age_seconds is not None and progress_age_seconds > 30.0)
+        or pointer_ahead_of_movement
+    )
+    return {
+        "backend_alive": backend_alive,
+        "running_pids": running_pids,
+        "pending_command_count": len(command_ids),
+        "pending_command_ids": command_ids,
+        "last_command_timestamp": _read_last_output_timestamp(),
+        "last_progress_timestamp": last_progress_timestamp,
+        "progress_age_seconds": progress_age_seconds,
+        "pointer_ahead_of_movement": pointer_ahead_of_movement,
+        "stalled": stalled,
+    }
+
+
+def _cleanup_stale_runtime_state():
+    for cmd_file in _list_pending_command_files():
+        try:
+            cmd_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+    for temp_name in ("curr_step.json",):
+        try:
+            Path(_temp_path(temp_name)).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _coerce_seed_value(raw_value, default: int = 1337) -> int:
+    try:
+        if raw_value in ("", None):
+            raise ValueError("empty seed")
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _terminate_backend_processes(pids: list[int]) -> list[int]:
+    terminated = []
+    for pid in pids:
+        try:
+            proc = psutil.Process(pid)
+            proc.terminate()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+        except Exception:
+            continue
+        terminated.append(pid)
+
+    if terminated:
+        gone, alive = psutil.wait_procs(
+            [psutil.Process(pid) for pid in terminated if psutil.pid_exists(pid)],
+            timeout=3.0,
+        )
+        for proc in alive:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    return terminated
 
 
 def _list_numeric_step_files(directory: str) -> list[int]:
@@ -333,7 +509,7 @@ def home(request):
     requested_ui_mode = str(request.GET.get("ui_mode", "auto")).strip().lower()
     if requested_ui_mode not in {"auto", "user"}:
         requested_ui_mode = "auto"
-    backend_mode = _backend_mode()
+    backend_mode = _effective_backend_mode(request)
     effective_ui_mode = backend_mode
     mode_switch_message = ""
     if requested_ui_mode != effective_ui_mode:
@@ -389,7 +565,38 @@ def home(request):
         context = {"error": f"No environment snapshots found for `{sim_code}` yet."}
         template = "home/error_start_backend.html"
         return render(request, template, context)
-    curr_json = _storage_path(sim_code, "environment", f"{str(max(file_count))}.json")
+    latest_environment_step = max(file_count)
+
+    # User mode keeps the historical "movement-driven" pointer behavior so the
+    # chat flow can continue from the next available frame. Auto mode renders
+    # a movement-safe environment snapshot as a static baseline and only starts
+    # playback when a newer movement frame arrives. If stale environment
+    # snapshots are ahead of movement, clamp the initial baseline back to the
+    # latest movement-backed step so the browser does not wait on a nonexistent
+    # frame forever.
+    movement_steps = _list_numeric_step_files(_storage_path(sim_code, "movement"))
+    latest_movement_step = movement_steps[-1] if movement_steps else None
+    runtime_alignment_note = ""
+    if effective_ui_mode == "auto":
+        render_step = latest_environment_step
+        if latest_movement_step is not None:
+            render_step = min(latest_environment_step, latest_movement_step)
+            if latest_environment_step > latest_movement_step:
+                runtime_alignment_note = (
+                    f"Environment snapshots were ahead of movement; "
+                    f"auto mode reset the initial render baseline to step {render_step}."
+                )
+        playback_step = render_step + 1
+        step = render_step
+    else:
+        if movement_steps and step not in movement_steps:
+            step = max(movement_steps)
+        elif not movement_steps:
+            step = 0
+        render_step = step if step in file_count else latest_environment_step
+        playback_step = step
+
+    curr_json = _storage_path(sim_code, "environment", f"{str(render_step)}.json")
     with open(curr_json) as json_file:  
         persona_init_pos_dict = json.load(json_file)
         for key, val in persona_init_pos_dict.items(): 
@@ -399,19 +606,13 @@ def home(request):
     with open(_storage_path(sim_code, "reverie", "maze_visuals.json")) as json_file:  
         maze_meta = json.load(json_file)
 
-    # Guard against stale curr_step values: frontend should start from an
-    # existing movement frame, otherwise update loop can wait forever.
-    movement_steps = _list_numeric_step_files(_storage_path(sim_code, "movement"))
-    if movement_steps and step not in movement_steps:
-        step = max(movement_steps)
-    elif not movement_steps:
-        step = 0
-
     runtime_sources = _build_runtime_sync(sim_code, status_step=_read_status_step(sim_code))
 
     context = {
         "sim_code": sim_code,
         "step": step,
+        "render_step": render_step,
+        "playback_step": playback_step,
         "persona_names": persona_names,
         "persona_init_pos": persona_init_pos,
         "mode": "simulate",
@@ -419,6 +620,7 @@ def home(request):
         "effective_ui_mode": effective_ui_mode,
         "backend_mode": backend_mode,
         "mode_switch_message": mode_switch_message,
+        "runtime_alignment_note": runtime_alignment_note,
         "runtime_sources": runtime_sources,
         "maze_size": [maze_meta["width"], maze_meta["height"]],
     }
@@ -574,16 +776,49 @@ def process_environment(request):
     RETURNS: 
         HttpResponse: string confirmation message. 
     """
-    data = json.loads(request.body)
-    step = data["step"]
-    sim_code = data["sim_code"]
-    environment = _sanitize_environment_snapshot(sim_code, data["environment"])
+    if request.method != "POST":
+        return JsonResponse({"ok": False, "error": "POST required"}, status=405)
 
-    with open(_storage_path(sim_code, "environment", f"{step}.json"), "w") as outfile:
-        outfile.write(json.dumps(environment, indent=2))
-        outfile.flush()
+    try:
+        data = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "error": "invalid JSON payload"}, status=400)
 
-    return HttpResponse("received")
+    if not isinstance(data, dict):
+        return JsonResponse({"ok": False, "error": "payload must be a JSON object"}, status=400)
+
+    missing = [key for key in ("step", "sim_code", "environment") if key not in data]
+    if missing:
+        return JsonResponse({"ok": False, "error": f"missing required fields: {', '.join(missing)}"}, status=400)
+
+    try:
+        step = int(data["step"])
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "step must be an integer"}, status=400)
+    if step < 0:
+        return JsonResponse({"ok": False, "error": "step must be >= 0"}, status=400)
+
+    sim_code = str(data["sim_code"]).strip()
+    if not sim_code:
+        return JsonResponse({"ok": False, "error": "sim_code must be a non-empty string"}, status=400)
+
+    environment_payload = data["environment"]
+    if not isinstance(environment_payload, dict):
+        return JsonResponse({"ok": False, "error": "environment must be an object"}, status=400)
+
+    try:
+        environment = _sanitize_environment_snapshot(sim_code, environment_payload)
+        target_dir = _storage_path(sim_code, "environment")
+        os.makedirs(target_dir, exist_ok=True)
+        with open(_storage_path(sim_code, "environment", f"{step}.json"), "w", encoding="utf-8") as outfile:
+            json.dump(environment, outfile, indent=2)
+            outfile.flush()
+    except OSError as exc:
+        return JsonResponse({"ok": False, "error": f"failed to write environment snapshot: {exc}"}, status=500)
+    except Exception as exc:
+        return JsonResponse({"ok": False, "error": f"unexpected process_environment error: {exc}"}, status=500)
+
+    return JsonResponse({"ok": True, "step": step, "sim_code": sim_code})
 
 def update_environment(request): 
     """
@@ -744,6 +979,8 @@ import psutil
 @csrf_exempt
 def start_backend(request, origin, target):
     try:
+        target = _normalize_sim_code(target) or target
+        headless_flag = str(request.GET.get("headless", "")).strip().lower() in {"1", "true", "yes", "y"}
         backend_dir = _resolve_backend_dir()
 
         if not backend_dir.exists():
@@ -752,18 +989,25 @@ def start_backend(request, origin, target):
                 "error": f"Backend directory not found: {backend_dir}"
             })
         running_pids = _list_running_reverie_processes(backend_dir)
-        if running_pids:
+        backend_health = _runtime_backend_health(target, backend_dir=backend_dir)
+        if running_pids and not backend_health.get("stalled"):
             return JsonResponse({
                 "ok": running_pids[0],
                 "backend_dir": str(backend_dir),
                 "already_running": True,
                 "running_pids": running_pids,
+                "backend_health": backend_health,
             })
+        if backend_health.get("stalled"):
+            _terminate_backend_processes(running_pids)
+            _cleanup_stale_runtime_state()
         if check_if_file_exists(_temp_path("curr_step.json")): 
             os.remove(_temp_path("curr_step.json"))
 
 
         arguments = ["--frontend_ui", "yes", "--origin", origin, "--target", target]
+        if headless_flag:
+            arguments += ["--headless", "yes"]
         cmd = [sys.executable, "reverie.py"]
         cmd += arguments
         backend_env = os.environ.copy()
@@ -797,11 +1041,41 @@ def start_backend(request, origin, target):
                 env=backend_env,
             )
         start_wait = time.time()
-        while (not check_if_file_exists(_temp_path("curr_step.json"))):
+        startup_ok = False
+        while True:
+            curr_step_exists = check_if_file_exists(_temp_path("curr_step.json"))
+            curr_sim_ok = False
+            status_exists = check_if_file_exists(_storage_path(target, "sim_status.json"))
+            try:
+                curr_sim_ok = _current_sim_code("") == target
+            except Exception:
+                curr_sim_ok = False
+            # Startup should not fail just because sim_status.json is not yet
+            # materialized before the first run command.
+            if curr_step_exists and curr_sim_ok:
+                startup_ok = True
+                break
             if time.time() - start_wait > 20:
                 break
             time.sleep(0.5)
-        return JsonResponse({"ok": curr_sim.pid if curr_sim else True, "backend_dir": str(backend_dir)})
+        post_health = _runtime_backend_health(target, backend_dir=backend_dir)
+        if not startup_ok:
+            return JsonResponse({
+                "ok": False,
+                "error": "Backend failed health check after startup.",
+                "backend_dir": str(backend_dir),
+                "backend_health": post_health,
+                "health_expected": {
+                    "curr_step_exists": True,
+                    "curr_sim_matches_target": True,
+                    "sim_status_exists": "optional_at_startup",
+                },
+            }, status=503)
+        return JsonResponse({
+            "ok": curr_sim.pid if curr_sim else True,
+            "backend_dir": str(backend_dir),
+            "backend_health": post_health,
+        })
 
     except Exception as e:
         return JsonResponse({
@@ -828,10 +1102,8 @@ def live_dashboard_page(request):
 def live_dashboard_api(request):
     """Return the latest sim_status.json data for the live dashboard."""
     # Auto-detect active sim code
-    try:
-        with open(_temp_path("curr_sim_code.json")) as f:
-            sim_code = json.load(f).get("sim_code", "")
-    except (FileNotFoundError, json.JSONDecodeError):
+    sim_code = _current_sim_code("")
+    if not sim_code:
         return JsonResponse({"error": "No active simulation found."}, status=404)
 
     status_path = _storage_path(sim_code, "sim_status.json")
@@ -849,6 +1121,7 @@ def live_dashboard_api(request):
     except (TypeError, ValueError):
         status_step = None
     data["runtime_sync"] = _build_runtime_sync(sim_code, status_step=status_step)
+    data["backend_health"] = _runtime_backend_health(sim_code)
 
     # Optionally include completed patient stage times
     if request.GET.get("include_stages") == "true":
@@ -1006,6 +1279,7 @@ def save_simulation_settings(request):
         for key in allowed_keys:
             if key in payload:
                 meta[key] = payload[key]
+        meta["seed"] = _coerce_seed_value(meta.get("seed"), default=1337)
 
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=2)
@@ -1038,6 +1312,71 @@ def force_shutdown(request):
 
     except Exception as e:
         return JsonResponse({"ok": False, "error": str(e)}, status=500)
+
+
+@csrf_exempt
+def api_test_load_browser_fixture(request):
+    if not _test_mode_enabled():
+        return JsonResponse({"ok": False, "error": "fixture loader disabled"}, status=404)
+    if request.method != "POST":
+        return JsonResponse({"ok": False, "error": "POST required"}, status=405)
+
+    try:
+        payload = json.loads(request.body or b"{}")
+        fixture_name = str(payload.get("fixture", "")).strip()
+        if not fixture_name:
+            return JsonResponse({"ok": False, "error": "fixture is required"}, status=400)
+
+        fixture_root = _browser_fixture_root() / fixture_name
+        storage_fixture = fixture_root / "storage"
+        temp_fixture = fixture_root / "temp_storage"
+        if not storage_fixture.exists() or not temp_fixture.exists():
+            return JsonResponse({"ok": False, "error": f"unknown fixture: {fixture_name}"}, status=404)
+
+        STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+
+        sim_code = str(payload.get("sim_code", "")).strip()
+        if not sim_code:
+            candidate_dirs = [path.name for path in storage_fixture.iterdir() if path.is_dir()]
+            if len(candidate_dirs) != 1:
+                return JsonResponse({"ok": False, "error": "fixture must contain exactly one sim directory or explicit sim_code"}, status=400)
+            sim_code = candidate_dirs[0]
+
+        target_sim_dir = STORAGE_ROOT / sim_code
+        source_sim_dir = storage_fixture / sim_code
+        if not source_sim_dir.exists():
+            return JsonResponse({"ok": False, "error": f"fixture sim directory missing: {sim_code}"}, status=404)
+        if target_sim_dir.exists():
+            shutil.rmtree(target_sim_dir)
+        shutil.copytree(source_sim_dir, target_sim_dir)
+
+        for src_file in temp_fixture.rglob("*"):
+            if src_file.is_dir():
+                continue
+            relative = src_file.relative_to(temp_fixture)
+            dest_file = TEMP_ROOT / relative
+            dest_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src_file, dest_file)
+
+        if "step" in payload:
+            with open(_temp_path("curr_step.json"), "w", encoding="utf-8") as f:
+                json.dump({"step": int(payload["step"])}, f)
+        if "ui_mode" in payload:
+            with open(_temp_path("fixture_ui_mode.json"), "w", encoding="utf-8") as f:
+                json.dump({"ui_mode": str(payload["ui_mode"])}, f)
+
+        runtime_sync = _build_runtime_sync(sim_code, status_step=_read_status_step(sim_code))
+        return JsonResponse(
+            {
+                "ok": True,
+                "fixture": fixture_name,
+                "sim_code": sim_code,
+                "runtime_sync": runtime_sync,
+            }
+        )
+    except Exception as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=500)
 
 
 def _parse_json_body(request):

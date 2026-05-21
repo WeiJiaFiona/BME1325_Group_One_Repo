@@ -9,6 +9,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
+from app_core.his.adapters import persist_current_summary, persist_handoff_snapshot, persist_memory_item
+from app_core.his.config import generate_encounter_id as generate_his_encounter_id
+from app_core.his.config import generate_patient_id as generate_his_patient_id
+from app_core.his.schemas import EncounterRecord, PatientRecord, TriageRecord, VitalSignsRecord
+from app_core.his.services.encounter_service import open_encounter, record_vital_signs, update_encounter_state
+from app_core.his.services.patient_registry_service import register_patient
+from app_core.his.services.triage_service import record_triage
+from app_core.his.storage import create_his_storage
+from app_core.his.storage.base import HisStorage
 from app_core.memory.hooks import (
     build_audit_record,
     build_handoff_snapshot_id,
@@ -31,16 +40,19 @@ class AutoMemoryHookManager:
         runtime_logger=None,
         enabled: bool | None = None,
         now: datetime | None = None,
+        his_storage: HisStorage | None = None,
     ) -> None:
         self.sim_code = sim_code
         self.start_time = start_time
         self.service = service or create_memory_service(enabled=enabled)
+        self.his_storage = his_storage
         self.runtime_logger = runtime_logger
         self.run_id = generate_auto_run_id(sim_code, now=now)
         self.mode = "auto"
         self._emitted_keys: set[tuple[str, str]] = set()
         self._active_bottlenecks: set[str] = set()
         self._memory_steps: dict[str, int] = {}
+        self._his_ids: dict[str, tuple[str, str]] = {}
         self._registered_handlers = {
             "encounter_started": self.record_encounter_started,
             "resource_bottleneck": self.record_resource_bottlenecks,
@@ -439,6 +451,15 @@ class AutoMemoryHookManager:
                 action=lambda: self.service.write_handoff_snapshot(snapshot),
                 details={"event_type": event_type, "patient": patient_name, "memory_id": memory_id},
             )
+        self._safe_his_sync(
+            patient=patient,
+            encounter_id=encounter_id,
+            item=stored_item if isinstance(stored_item, MemoryItem) else item,
+            summary=summary,
+            snapshot=snapshot if snapshot_stage in {"requested", "completed"} else None,
+            event_type=event_type,
+            payload=payload,
+        )
         return {"ok": True, "result": stored_item, "summary": summary}
 
     def _safe_memory_write(self, op_type: str, *, checkpoint: str, encounter_id: str, action, details: dict[str, Any]) -> dict[str, Any]:
@@ -630,6 +651,160 @@ class AutoMemoryHookManager:
         if sim_time is None or self.start_time is None:
             return None
         return max(0.0, (sim_time - self.start_time).total_seconds() / 60.0)
+
+    def _get_his_storage(self) -> HisStorage | None:
+        if self.his_storage is not None:
+            return self.his_storage
+        try:
+            self.his_storage = create_his_storage()
+        except Exception as exc:
+            self._log("auto HIS bootstrap failed", extra={"error": str(exc)})
+            self.his_storage = None
+        return self.his_storage
+
+    def _ensure_his_entities(
+        self,
+        *,
+        patient: Any,
+        encounter_id: str,
+        item: MemoryItem,
+        summary: CurrentEncounterSummary,
+        payload: dict[str, Any],
+        storage: HisStorage,
+    ) -> tuple[str, str]:
+        his_ids = self._his_ids.get(encounter_id)
+        if his_ids is None:
+            his_ids = (generate_his_patient_id(), generate_his_encounter_id())
+            self._his_ids[encounter_id] = his_ids
+        his_patient_id, his_encounter_id = his_ids
+
+        register_patient(
+            PatientRecord(
+                patient_id=his_patient_id,
+                full_name=str(getattr(patient, "name", "Unknown patient")),
+                identifiers={
+                    "auto_run_id": self.run_id,
+                    "auto_encounter_id": encounter_id,
+                    "auto_patient_id": item.patient_id,
+                },
+            ),
+            storage=storage,
+        )
+        try:
+            existing = storage.get_encounter(his_encounter_id)
+        except Exception:
+            existing = None
+        if existing is None:
+            open_encounter(
+                EncounterRecord(
+                    patient_id=his_patient_id,
+                    encounter_id=his_encounter_id,
+                    status=str(summary.current_state or "OPEN"),
+                    arrival_mode="auto",
+                    current_zone=summary.current_zone,
+                    ctas_level=f"L{summary.acuity}" if summary.acuity else None,
+                    metadata={
+                        "auto_run_id": self.run_id,
+                        "auto_encounter_id": encounter_id,
+                        "public_patient_name": getattr(patient, "name", "Unknown patient"),
+                    },
+                ),
+                storage=storage,
+            )
+            record_triage(
+                TriageRecord(
+                    encounter_id=his_encounter_id,
+                    patient_id=his_patient_id,
+                    triage_id=f"triage-{his_encounter_id}",
+                    ctas_level=f"L{summary.acuity}" if summary.acuity else "L3",
+                    zone=str(summary.current_zone or payload.get("zone") or "yellow"),
+                    summary=str(payload.get("state") or "auto encounter"),
+                    structured_data=dict(payload),
+                ),
+                storage=storage,
+            )
+        else:
+            update_encounter_state(
+                his_encounter_id,
+                status=str(summary.current_state or existing.status),
+                current_zone=summary.current_zone,
+                ctas_level=f"L{summary.acuity}" if summary.acuity else existing.ctas_level,
+                storage=storage,
+            )
+
+        if item.event_type == "encounter_started":
+            readings = {}
+            ctas = getattr(getattr(patient, "scratch", None), "CTAS", None)
+            if ctas is not None:
+                readings["ctas"] = ctas
+            zone = getattr(getattr(patient, "scratch", None), "injuries_zone", None)
+            if zone:
+                readings["zone"] = zone
+            if readings:
+                record_vital_signs(
+                    VitalSignsRecord(
+                        encounter_id=his_encounter_id,
+                        patient_id=his_patient_id,
+                        vital_id=f"auto-vitals-{his_encounter_id}",
+                        readings=readings,
+                    ),
+                    storage=storage,
+                )
+        return his_patient_id, his_encounter_id
+
+    def _safe_his_sync(
+        self,
+        *,
+        patient: Any,
+        encounter_id: str,
+        item: MemoryItem,
+        summary: CurrentEncounterSummary,
+        snapshot: HandoffMemorySnapshot | None,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        storage = self._get_his_storage()
+        if storage is None:
+            return
+        try:
+            his_patient_id, his_encounter_id = self._ensure_his_entities(
+                patient=patient,
+                encounter_id=encounter_id,
+                item=item,
+                summary=summary,
+                payload=payload,
+                storage=storage,
+            )
+            his_item = MemoryItem.from_dict(
+                {
+                    **item.to_dict(),
+                    "patient_id": his_patient_id,
+                    "encounter_id": his_encounter_id,
+                }
+            )
+            persist_memory_item(his_item, storage=storage)
+            his_summary = CurrentEncounterSummary.from_dict(
+                {
+                    **summary.to_dict(),
+                    "patient_id": his_patient_id,
+                    "encounter_id": his_encounter_id,
+                }
+            )
+            persist_current_summary(his_summary, storage=storage)
+            if snapshot is not None:
+                his_snapshot = HandoffMemorySnapshot.from_dict(
+                    {
+                        **snapshot.to_dict(),
+                        "patient_id": his_patient_id,
+                        "encounter_id": his_encounter_id,
+                    }
+                )
+                persist_handoff_snapshot(his_snapshot, storage=storage)
+        except Exception as exc:
+            self._log(
+                "auto HIS sync failed",
+                extra={"event_type": event_type, "patient": getattr(patient, "name", "Unknown patient"), "error": str(exc)},
+            )
 
     def _log(self, message: str, *, step: int | None = None, extra: dict[str, Any] | None = None) -> None:
         if self.runtime_logger is None:

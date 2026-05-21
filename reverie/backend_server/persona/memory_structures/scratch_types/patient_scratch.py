@@ -15,6 +15,10 @@ class patient_scratch(Scratch):
         self.state = None
         self.time_to_next = None
         self.exempt_from_data_collection = False
+        self.user_controlled = False
+        self.user_patient_id = None
+        self.user_encounter_id = None
+        self.user_phase = None
         self.left_without_being_seen = False
         self.left_without_being_seen_time = None
         self.left_without_being_seen_state = None
@@ -69,6 +73,10 @@ class patient_scratch(Scratch):
                                                             "%B %d, %Y, %H:%M:%S")
                 
             self.exempt_from_data_collection = scratch_load["exempt_from_data_collection"]
+            self.user_controlled = scratch_load.get("user_controlled", False)
+            self.user_patient_id = scratch_load.get("user_patient_id")
+            self.user_encounter_id = scratch_load.get("user_encounter_id")
+            self.user_phase = scratch_load.get("user_phase")
             self.left_without_being_seen = scratch_load.get("left_without_being_seen", False)
             left_time = scratch_load.get("left_without_being_seen_time")
             if left_time:
@@ -152,6 +160,10 @@ class patient_scratch(Scratch):
             scratch["time_to_next"] = None
 
         scratch["exempt_from_data_collection"] = self.exempt_from_data_collection
+        scratch["user_controlled"] = self.user_controlled
+        scratch["user_patient_id"] = self.user_patient_id
+        scratch["user_encounter_id"] = self.user_encounter_id
+        scratch["user_phase"] = self.user_phase
         scratch["left_without_being_seen"] = self.left_without_being_seen
         scratch["left_without_being_seen_time"] = (self.left_without_being_seen_time.strftime("%B %d, %Y, %H:%M:%S")
                                                    if self.left_without_being_seen_time else None)

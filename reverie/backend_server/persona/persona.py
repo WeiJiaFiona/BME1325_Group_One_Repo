@@ -78,6 +78,10 @@ REQUIRED_FIELDS = {
     "time_to_next": None,
     "injuries_zone": None,
     "exempt_from_data_collection": False,
+    "user_controlled": False,
+    "user_patient_id": None,
+    "user_encounter_id": None,
+    "user_phase": None,
 }
 
 
@@ -411,17 +415,21 @@ class Persona:
 
   # Method to create a new persona using a API call and creating a new object
   @staticmethod
-  def create_persona(PersonaClass, persona_role, role_num, desc, curr_time, sim_folder, maze,  persona_loc = None, seed=0):
+  def create_persona(PersonaClass, persona_role, role_num, desc, curr_time, sim_folder, maze,  persona_loc = None, seed=0, explicit_name=None):
     # Convert CamelCase to spaced name: "BedsideNurse" -> "Bedside Nurse"
     display_name = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', persona_role)
-    full_name = f"{display_name} {role_num}"
+    full_name = str(explicit_name).strip() if explicit_name else f"{display_name} {role_num}"
+    if " " in full_name:
+        derived_first_name, derived_last_name = full_name.rsplit(" ", 1)
+    else:
+        derived_first_name, derived_last_name = full_name, str(role_num)
 
     if persona_role in Persona._role_scratch_cache:
         # Copy from cached template
         new_scratch = copy.deepcopy(Persona._role_scratch_cache[persona_role])
         new_scratch["name"] = full_name
-        new_scratch["first_name"] = display_name
-        new_scratch["last_name"] = str(role_num)
+        new_scratch["first_name"] = derived_first_name
+        new_scratch["last_name"] = derived_last_name
         new_scratch["act_event"] = [full_name, None, None]
     else:
         # First of this role — generate via GPT
@@ -429,8 +437,8 @@ class Persona:
         new_scratch = normalize_patient_scratch(new_scratch)
         # Force correct name regardless of what GPT returned
         new_scratch["name"] = full_name
-        new_scratch["first_name"] = display_name
-        new_scratch["last_name"] = str(role_num)
+        new_scratch["first_name"] = derived_first_name
+        new_scratch["last_name"] = derived_last_name
         new_scratch["act_event"] = [full_name, None, None]
         # Cache for future copies
         Persona._role_scratch_cache[persona_role] = copy.deepcopy(new_scratch)
@@ -474,7 +482,6 @@ class Persona:
     curr_persona.scratch.curr_tile = [p_x, p_y]
 
     return curr_persona, [p_x, p_y]
-
 
 
 

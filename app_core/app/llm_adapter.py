@@ -102,12 +102,19 @@ def _resolve_llm_config() -> Dict[str, str]:
     api_key = (
         os.getenv("OPENAI_API_KEY", "").strip()
         or os.getenv("OPENAI_KEY", "").strip()
+        or os.getenv("EDSIM_MODEL_KEY", "").strip()
         or cfg.get("api_key", "")
     )
-    model = os.getenv("OPENAI_MODEL", "").strip() or cfg.get("model", "") or "gpt-4o-mini"
+    model = (
+        os.getenv("OPENAI_MODEL", "").strip()
+        or os.getenv("EDSIM_MODEL", "").strip()
+        or cfg.get("model", "")
+        or "gpt-4o-mini"
+    )
     endpoint = (
         os.getenv("OPENAI_BASE_URL", "").strip()
         or os.getenv("OPENAI_ENDPOINT", "").strip()
+        or os.getenv("EDSIM_MODEL_ENDPOINT", "").strip()
         or cfg.get("endpoint", "")
         or "https://api.openai.com/v1"
     )

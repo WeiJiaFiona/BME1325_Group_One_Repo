@@ -102,6 +102,71 @@ def _atomic_write_json(path, data, indent=2, retries=5, retry_delay=0.05):
       pass
     raise
 
+
+def _normalize_tile_coordinate(tile):
+  if not isinstance(tile, (list, tuple)) or len(tile) != 2:
+    return None
+  try:
+    return (int(tile[0]), int(tile[1]))
+  except (TypeError, ValueError):
+    return None
+
+
+def _path_is_adjacent(path_tiles):
+  for idx in range(1, len(path_tiles)):
+    prev_tile = path_tiles[idx - 1]
+    curr_tile = path_tiles[idx]
+    if abs(prev_tile[0] - curr_tile[0]) + abs(prev_tile[1] - curr_tile[1]) != 1:
+      return False
+  return True
+
+
+def _path_is_collision_free(collision_maze, path_tiles):
+  if not collision_maze:
+    return False
+  max_y = len(collision_maze)
+  max_x = len(collision_maze[0]) if max_y else 0
+  for tile_x, tile_y in path_tiles:
+    if tile_y < 0 or tile_y >= max_y or tile_x < 0 or tile_x >= max_x:
+      return False
+    if collision_maze[tile_y][tile_x] != 0:
+      return False
+  return True
+
+
+def _build_safe_movement_path(collision_maze, start_tile, end_tile):
+  start = _normalize_tile_coordinate(start_tile)
+  end = _normalize_tile_coordinate(end_tile)
+  if start is None or end is None:
+    return []
+  if start == end:
+    return [[start[0], start[1]]]
+
+  try:
+    from path_finder import path_finder as _path_finder
+
+    raw_path = _path_finder(collision_maze, start, end, "#")
+  except Exception:
+    raw_path = []
+
+  normalized = []
+  for tile in raw_path or []:
+    coord = _normalize_tile_coordinate(tile)
+    if coord is None:
+      continue
+    if not normalized or normalized[-1] != coord:
+      normalized.append(coord)
+
+  if not normalized:
+    return []
+  if normalized[0] != start or normalized[-1] != end:
+    return []
+  if not _path_is_adjacent(normalized):
+    return []
+  if not _path_is_collision_free(collision_maze, normalized):
+    return []
+  return [[tile_x, tile_y] for tile_x, tile_y in normalized]
+
 ##############################################################################
 #                                  REVERIE                                   #
 ##############################################################################
@@ -484,6 +549,11 @@ class ReverieServer:
     # <server_sleep> denotes the amount of time that our while loop rests each
     # cycle; this is to not kill our machine. 
     self.server_sleep = 0.01
+    self.user_controlled_patients = {
+      persona.name: persona.name
+      for persona in self.personas.values()
+      if getattr(getattr(persona, "scratch", None), "user_controlled", False)
+    }
 
 
     # SIGNALING THE FRONTEND SERVER: 
@@ -1848,6 +1918,100 @@ class ReverieServer:
 
     print(f"(reverie): Preloaded {count} real patients into the waiting room")
 
+  def _remove_patient_from_auto_queues(self, patient_name):
+    self.maze.triage_queue[:] = [name for name in self.maze.triage_queue if name != patient_name]
+    self.maze.patients_waiting_for_doctor[:] = [
+      entry for entry in self.maze.patients_waiting_for_doctor
+      if len(entry) < 2 or entry[1] != patient_name
+    ]
+    for queue_name in ("bedside_nurse_waiting", "pager"):
+      queue = self.maze.injuries_zones.get(queue_name, [])
+      queue[:] = [entry for entry in queue if len(entry) < 2 or entry[1] != patient_name]
+
+  def _waiting_room_spawn(self):
+    chairs = list(self.maze.address_tiles.get("ed map:emergency department:waiting room:waiting room chair", []))
+    if chairs:
+      return random.choice(chairs)
+    exits = list(self.maze.address_tiles.get("<spawn_loc>exit", []))
+    if exits:
+      return random.choice(exits)
+    return [0, 0]
+
+  def _zone_bed_spawn(self, zone_name):
+    zone_key = str(zone_name or "").strip()
+    bed_tiles = list(self.maze.address_tiles.get(f"ed map:emergency department:{zone_key}:bed", []))
+    if bed_tiles:
+      return random.choice(bed_tiles)
+    return self._waiting_room_spawn()
+
+  def _next_step_for_user_phase(self, phase, zone_name):
+    phase_key = str(phase or "").strip().upper()
+    zone_key = str(zone_name or "minor injuries zone").strip()
+    if phase_key in {"DOCTOR_CALLED", "IN_CONSULTATION", "BED_NURSE_FLOW"}:
+      return f"ed map:emergency department:{zone_key}:bed"
+    if phase_key == "DONE":
+      return "ed map:emergency department:exit"
+    return "ed map:emergency department:waiting room:waiting room chair"
+
+  def upsert_user_controlled_patient(self, payload):
+    if not isinstance(payload, dict):
+      raise ValueError("payload must be a dict")
+
+    patient_name = str(payload.get("persona_name") or "").strip()
+    if not patient_name:
+      raise ValueError("persona_name is required")
+    user_patient_id = str(payload.get("user_patient_id") or patient_name).strip()
+    user_encounter_id = str(payload.get("user_encounter_id") or "").strip() or None
+    chief_complaint = str(payload.get("chief_complaint") or "User-controlled patient").strip()
+    phase = str(payload.get("user_phase") or "WAITING_CALL").strip().upper()
+    ctas = int(payload.get("ctas") or 3)
+    zone_name = str(payload.get("injuries_zone") or "minor injuries zone").strip()
+    enqueue_doctor = bool(payload.get("enqueue_doctor", False))
+    doctor_priority = float(payload.get("doctor_priority") or (ctas * max(1, Patient.priority_factor)))
+
+    curr_persona = self.personas.get(patient_name)
+    if curr_persona is None:
+      spawn_tile = self._waiting_room_spawn() if not enqueue_doctor else self._zone_bed_spawn(zone_name)
+      curr_persona, pos = self.add_persona_to_sim(
+        "Patient",
+        agent_desc=f"Experiencing {chief_complaint} | Innate: Cooperative, Anxious",
+        persona_loc=spawn_tile,
+        persona_name=patient_name,
+      )
+      self.add_persona_to_step(curr_persona, pos)
+    else:
+      pos = list(self.personas_tile.get(patient_name, self._waiting_room_spawn()))
+
+    curr_persona.scratch.user_controlled = True
+    curr_persona.scratch.user_patient_id = user_patient_id
+    curr_persona.scratch.user_encounter_id = user_encounter_id
+    curr_persona.scratch.user_phase = phase
+    curr_persona.scratch.exempt_from_data_collection = False
+    curr_persona.scratch.ICD = curr_persona.scratch.ICD or "USER-MODE"
+    curr_persona.scratch.CTAS = ctas
+    curr_persona.scratch.injuries_zone = zone_name
+    curr_persona.scratch.state = "WAITING_FOR_DOCTOR" if phase not in {"DONE"} else "WAITING_FOR_EXIT"
+    curr_persona.scratch.next_room = zone_name
+    curr_persona.scratch.next_step = self._next_step_for_user_phase(phase, zone_name)
+    curr_persona.scratch.act_path_set = False
+    curr_persona.scratch.chat = None
+
+    self._remove_patient_from_auto_queues(patient_name)
+    if enqueue_doctor:
+      bisect.insort_right(self.maze.patients_waiting_for_doctor, [doctor_priority, patient_name])
+
+    self.user_controlled_patients[user_patient_id] = patient_name
+    self.personas_tile[patient_name] = tuple(pos)
+    self._write_sim_status(f"{fs_storage}/{self.sim_code}")
+    return {
+      "persona_name": patient_name,
+      "user_patient_id": user_patient_id,
+      "user_encounter_id": user_encounter_id,
+      "phase": phase,
+      "enqueue_doctor": enqueue_doctor,
+      "doctor_priority": doctor_priority,
+    }
+
   def start_server(self, int_counter):
     """
     The main backend server of Reverie. 
@@ -2117,6 +2281,13 @@ class ReverieServer:
                   travel_area[pre_area] = travel_area.get(pre_area, 0) + travel_minutes
             movements["persona"][persona_name] = {}
             movements["persona"][persona_name]["movement"] = next_tile
+            movement_path = _build_safe_movement_path(
+              self.maze.collision_maze,
+              tile_entry,
+              next_tile,
+            )
+            movements["persona"][persona_name]["movement_path"] = movement_path
+            movements["persona"][persona_name]["path_length"] = max(0, len(movement_path) - 1)
             movements["persona"][persona_name]["pronunciatio"] = pronunciatio
             movements["persona"][persona_name]["description"] = description
             movements["persona"][persona_name]["chat"] = (persona
@@ -2144,6 +2315,8 @@ class ReverieServer:
             # Add to this steps movement dict so that frontend can see it
             movements["persona"][new_patient.name] = {}
             movements["persona"][new_patient.name]["movement"] = curr_tile
+            movements["persona"][new_patient.name]["movement_path"] = [[curr_tile[0], curr_tile[1]]]
+            movements["persona"][new_patient.name]["path_length"] = 0
             movements["persona"][new_patient.name]["pronunciatio"] = ""
             movements["persona"][new_patient.name]["description"] = ""
             movements["persona"][new_patient.name]["chat"] = (new_patient.scratch.chat)
@@ -2307,6 +2480,7 @@ class ReverieServer:
 
     while True:
         sim_command = None
+        cmd_args = {}
         cmd_id = None
         cmd_path = None
         finished = False
@@ -2323,9 +2497,12 @@ class ReverieServer:
 
             cmd_path = cmd_files[0]
             try:
-                with open(cmd_path, encoding="utf-8") as f:
+                # Accept UTF-8 with/without BOM so commands from PowerShell
+                # and browser writers are both consumable.
+                with open(cmd_path, encoding="utf-8-sig") as f:
                     payload = json.load(f)
                 sim_command = payload.get("command", "").strip()
+                cmd_args = payload.get("args") or {}
                 cmd_id = payload.get("id", cmd_path.stem)
             except (json.JSONDecodeError, PermissionError) as e:
                 print("(reverie): Command file not ready yet:", e)
@@ -2398,6 +2575,10 @@ class ReverieServer:
                 elapsed_seconds=elapsed,
                 extra={"completed_steps": int_count, "curr_step": self.step},
               )
+
+          elif cmd_lower == "inject_user_patient":
+              result = self.upsert_user_controlled_patient(cmd_args if isinstance(cmd_args, dict) else {})
+              ret_str = json.dumps({"ok": True, "result": result})
 
           elif cmd_lower.startswith("print persona schedule"):
               name = " ".join(sim_command.split()[-2:])
@@ -2750,7 +2931,7 @@ class ReverieServer:
 
   # To create patient during simulation
   # Adds and initiate persona in simulation
-  def add_persona_to_sim(self, persona_role, agent_desc = "", persona_loc = None):
+  def add_persona_to_sim(self, persona_role, agent_desc = "", persona_loc = None, persona_name = None):
     self.num_roles[persona_role] += 1
     sim_folder = f"{fs_storage}/{self.sim_code}"
 
@@ -2766,6 +2947,7 @@ class ReverieServer:
         self.maze,
         persona_loc=persona_loc,
         seed=self.seed,
+        explicit_name=persona_name,
     )
 
     _assign_wait_targets(curr_persona, self.ctas_wait_config, self.curr_time, self.surge_multiplier)

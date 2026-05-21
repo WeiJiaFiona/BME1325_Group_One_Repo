@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
+from pathlib import Path
 import uuid
 
 ID_PREFIX_PATIENT = "P"
 ID_PREFIX_ENCOUNTER = "E"
+CN_TZ = timezone(timedelta(hours=8))
 FROZEN_ROUTE_NAMES = ("transfer", "admissions", "summary", "timeline")
 EVENT_ENVELOPE_FIELDS = (
     "event_id",
@@ -27,7 +29,7 @@ POSTGRES_MIGRATION_SEQUENCE = (
 HIS_DB_BACKEND = os.getenv("HIS_DB_BACKEND", "sqlite_dev").strip() or "sqlite_dev"
 DEFAULT_SQLITE_DEV_PATH = os.getenv(
     "HIS_SQLITE_DEV_PATH",
-    "/home/jiawei2022/BME1325/week9/week9_v1/data/his_dev.sqlite3",
+    str(Path(__file__).resolve().parents[2] / "data" / "his_dev.sqlite3"),
 )
 
 
@@ -40,7 +42,10 @@ def generate_patient_id() -> str:
 
 
 def generate_encounter_id(now: datetime | None = None) -> str:
-    instant = now.astimezone(timezone.utc) if now and now.tzinfo else now or datetime.now(timezone.utc)
-    if instant.tzinfo is None:
-        instant = instant.replace(tzinfo=timezone.utc)
+    if now is None:
+        instant = datetime.now(CN_TZ)
+    elif now.tzinfo is None:
+        instant = now.replace(tzinfo=CN_TZ)
+    else:
+        instant = now.astimezone(CN_TZ)
     return f"{ID_PREFIX_ENCOUNTER}-{instant.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4]}"

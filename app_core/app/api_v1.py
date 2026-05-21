@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 import json
+import os
 import re
 import uuid
 
@@ -14,11 +16,46 @@ from app_core.app.planning.plan_validator import validate_plan
 from app_core.app.rag.evidence_builder import build_evidence_package
 from app_core.app.rag.protocol_retriever import retrieve_protocols
 from app_core.app.schema import PayloadError, validate_encounter_start_payload
+from app_core.his.adapters.contract_adapter import build_event_envelope, derive_zone_from_ctas
+from app_core.his.config import generate_encounter_id as generate_his_encounter_id
+from app_core.his.config import generate_patient_id as generate_his_patient_id
+from app_core.his.schemas import (
+    AuditLogEntry,
+    ClinicalAssessmentRecord,
+    CurrentSummaryRecord,
+    DiagnosisRecord,
+    EncounterRecord,
+    EventRegistryEntry,
+    HandoffSnapshotRecord,
+    PatientRecord,
+    TriageRecord,
+    VitalSignsRecord,
+)
+from app_core.his.services.audit_service import append_audit_log
+from app_core.his.services.encounter_service import (
+    open_encounter as his_open_encounter,
+    record_clinical_assessment,
+    record_diagnosis,
+    record_vital_signs,
+    update_encounter_state,
+    write_current_summary,
+)
+from app_core.his.services.event_registry_service import append_event_registry_entry
+from app_core.his.services.handoff_service import write_handoff_snapshot
+from app_core.his.services.outbox_service import enqueue_outbox_event
+from app_core.his.services.patient_registry_service import register_patient
+from app_core.his.services.triage_service import record_triage
+from app_core.his.storage import create_his_storage
+from app_core.his.storage.base import HisStorage
 from app_core.doctor_rag.bridge import run_bridge
 from app_core.clinical_kb.registry import registry_map
 
 
 ALLOWED_RECEIVER_SYSTEMS = {"OUTPATIENT", "ICU", "WARD"}
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+FRONTEND_ROOT = PROJECT_ROOT / "environment" / "frontend_server"
+TEMP_ROOT = Path(os.environ.get("EDSIM_TEMP_DIR", str(FRONTEND_ROOT / "temp_storage")))
+STORAGE_ROOT = FRONTEND_ROOT / "storage"
 
 
 @dataclass
@@ -35,6 +72,7 @@ class ApiError(Exception):
 _ENCOUNTERS: Dict[str, Dict[str, Any]] = {}
 _HANDOFF_TICKETS: Dict[str, Dict[str, Any]] = {}
 _USER_MODE_SESSION: Optional[Dict[str, Any]] = None
+_HIS_STORAGE: Optional[HisStorage] = None
 
 _SMALLTALK_PATTERNS = {
     "hi",
@@ -79,11 +117,390 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _storage_path(*parts: str) -> Path:
+    return STORAGE_ROOT.joinpath(*parts)
+
+
+def _temp_path(*parts: str) -> Path:
+    return TEMP_ROOT.joinpath(*parts)
+
+
+def _current_sim_code() -> str:
+    try:
+        payload = json.loads(_temp_path("curr_sim_code.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return ""
+    return str(payload.get("sim_code") or "").strip()
+
+
+def _load_auto_runtime_snapshot() -> Dict[str, Any]:
+    sim_code = _current_sim_code()
+    if not sim_code:
+        return {"available": False}
+
+    status_path = _storage_path(sim_code, "sim_status.json")
+    meta_path = _storage_path(sim_code, "reverie", "meta.json")
+    try:
+        status_payload = json.loads(status_path.read_text(encoding="utf-8")) if status_path.exists() else {}
+        meta_payload = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    except (json.JSONDecodeError, OSError):
+        return {"available": False, "sim_code": sim_code}
+
+    queue_entries: List[Dict[str, Any]] = []
+    for raw_entry in meta_payload.get("patients_waiting_for_doctor", []) or []:
+        if not isinstance(raw_entry, list) or len(raw_entry) < 2:
+            continue
+        try:
+            priority = float(raw_entry[0])
+        except (TypeError, ValueError):
+            continue
+        queue_entries.append({"priority": priority, "name": str(raw_entry[1])})
+
+    return {
+        "available": True,
+        "sim_code": sim_code,
+        "doctor_global_queue": int(((status_payload.get("queues") or {}).get("doctor_global")) or len(queue_entries)),
+        "triage_queue": int(((status_payload.get("queues") or {}).get("triage")) or 0),
+        "priority_factor": float(meta_payload.get("priority_factor") or 2),
+        "doctor_queue_entries": queue_entries,
+    }
+
+
+def _write_reverie_command(command: str, args: Dict[str, Any]) -> str:
+    cmd_dir = _temp_path("commands")
+    cmd_dir.mkdir(parents=True, exist_ok=True)
+    cmd_id = str(int(datetime.now(timezone.utc).timestamp() * 1000))
+    payload = {
+        "id": cmd_id,
+        "command": command,
+        "args": dict(args),
+        "created_at": _utc_now_iso(),
+    }
+    (cmd_dir / f"cmd_{cmd_id}.json").write_text(json.dumps(payload), encoding="utf-8")
+    return cmd_id
+
+
+def _auto_persona_name(session: Dict[str, Any]) -> str:
+    existing = str(session.get("auto_persona_name") or "").strip()
+    if existing:
+        return existing
+    patient_id = str(session.get("patient_id") or "Patient").strip()
+    persona_name = f"User {patient_id}"
+    session["auto_persona_name"] = persona_name
+    return persona_name
+
+
+def _sync_user_patient_to_auto(session: Dict[str, Any], *, enqueue_doctor: bool, user_phase: str) -> None:
+    auto_snapshot = _load_auto_runtime_snapshot()
+    if not auto_snapshot.get("available"):
+        return
+    triage = dict(session.get("shared_memory", {}).get("triage", {}) or {})
+    chief_complaint = str(session.get("shared_memory", {}).get("chief_complaint", "")).strip()
+    ctas = int(triage.get("ctas_compat") or triage.get("level_1_4") or 3)
+    priority_factor = float(auto_snapshot.get("priority_factor") or 2)
+    args = {
+        "persona_name": _auto_persona_name(session),
+        "user_patient_id": session.get("patient_id"),
+        "user_encounter_id": session.get("encounter_id"),
+        "chief_complaint": chief_complaint,
+        "injuries_zone": triage.get("zone") or derive_zone_from_ctas(f"L{ctas}"),
+        "ctas": ctas,
+        "user_phase": user_phase,
+        "enqueue_doctor": enqueue_doctor,
+        "doctor_priority": float(ctas * priority_factor),
+    }
+    try:
+        _write_reverie_command("inject_user_patient", args)
+    except OSError:
+        return
+
+
 def _parse_iso(ts: str) -> datetime:
     parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _get_his_storage() -> HisStorage:
+    global _HIS_STORAGE
+    if _HIS_STORAGE is None:
+        _HIS_STORAGE = create_his_storage()
+    return _HIS_STORAGE
+
+
+def _set_his_storage_for_tests(storage: Optional[HisStorage]) -> None:
+    global _HIS_STORAGE
+    _HIS_STORAGE = storage
+
+
+def _ensure_his_identifiers(encounter: Dict[str, Any]) -> tuple[str, str]:
+    his_patient_id = str(encounter.get("his_patient_id") or "").strip()
+    his_encounter_id = str(encounter.get("his_encounter_id") or "").strip()
+    if not his_patient_id:
+        his_patient_id = generate_his_patient_id()
+        encounter["his_patient_id"] = his_patient_id
+    if not his_encounter_id:
+        his_encounter_id = generate_his_encounter_id()
+        encounter["his_encounter_id"] = his_encounter_id
+    return his_patient_id, his_encounter_id
+
+
+def _append_his_event(
+    *,
+    his_patient_id: str,
+    his_encounter_id: str,
+    event_type: str,
+    source: str,
+    payload: Dict[str, Any],
+    storage: HisStorage,
+) -> EventRegistryEntry:
+    envelope = build_event_envelope(
+        event_type=event_type,
+        patient_id=his_patient_id,
+        encounter_id=his_encounter_id,
+        source=source,
+        payload=payload,
+    )
+    entry = EventRegistryEntry(
+        event_id=str(envelope["event_id"]),
+        event_type=str(envelope["event_type"]),
+        occurred_at=str(envelope["occurred_at"]),
+        patient_id=str(envelope["patient_id"]),
+        encounter_id=str(envelope["encounter_id"]),
+        source=str(envelope["source"]),
+        payload=dict(envelope["payload"]),
+        tags=[event_type],
+    )
+    return append_event_registry_entry(entry, storage=storage)
+
+
+def _write_his_summary(encounter: Dict[str, Any], *, storage: HisStorage) -> CurrentSummaryRecord:
+    his_patient_id, his_encounter_id = _ensure_his_identifiers(encounter)
+    triage = dict(encounter.get("triage", {}) or {})
+    payload = {
+        "public_encounter_id": encounter.get("encounter_id"),
+        "triage": triage,
+        "handoff_status": encounter.get("handoff_status", "NONE"),
+        "final_state": encounter.get("final_state"),
+        "state_trace": list(encounter.get("state_trace", [])),
+        "recommended_handoff_target": _infer_default_handoff_target(encounter),
+    }
+    summary = CurrentSummaryRecord(
+        encounter_id=his_encounter_id,
+        patient_id=his_patient_id,
+        summary_id=f"summary-{his_encounter_id}",
+        current_state=str(encounter.get("final_state") or "STARTED"),
+        payload=payload,
+        source_memory_ids=[],
+        updated_at=_utc_now_iso(),
+    )
+    return write_current_summary(summary, storage=storage)
+
+
+def _sync_encounter_to_his(encounter: Dict[str, Any]) -> None:
+    storage = _get_his_storage()
+    his_patient_id, his_encounter_id = _ensure_his_identifiers(encounter)
+    triage = dict(encounter.get("triage", {}) or {})
+    ctas_level = f"L{triage.get('ctas_compat', 3)}"
+    zone = triage.get("zone") or derive_zone_from_ctas(ctas_level)
+
+    register_patient(
+        PatientRecord(
+            patient_id=his_patient_id,
+            full_name=str(encounter.get("patient_id") or "Unknown Patient"),
+            identifiers={"public_patient_id": encounter.get("patient_id")},
+        ),
+        storage=storage,
+    )
+    his_open_encounter(
+        EncounterRecord(
+            patient_id=his_patient_id,
+            encounter_id=his_encounter_id,
+            status="OPEN",
+            arrival_mode="walk-in",
+            current_zone=zone,
+            ctas_level=ctas_level,
+            metadata={"public_encounter_id": encounter.get("encounter_id")},
+        ),
+        storage=storage,
+    )
+    record_triage(
+        TriageRecord(
+            encounter_id=his_encounter_id,
+            patient_id=his_patient_id,
+            triage_id=f"triage-{his_encounter_id}",
+            ctas_level=ctas_level,
+            zone=zone,
+            summary=str(triage.get("acuity_ad", "C")),
+            structured_data=triage,
+        ),
+        storage=storage,
+    )
+    vitals = dict(encounter.get("input_vitals", {}) or triage.get("vitals", {}) or {})
+    if vitals:
+        record_vital_signs(
+            VitalSignsRecord(
+                encounter_id=his_encounter_id,
+                patient_id=his_patient_id,
+                vital_id=f"vitals-{his_encounter_id}",
+                readings=vitals,
+            ),
+            storage=storage,
+        )
+    _append_his_event(
+        his_patient_id=his_patient_id,
+        his_encounter_id=his_encounter_id,
+        event_type="encounter_started",
+        source="user_mode.start_encounter",
+        payload={"triage": triage, "public_encounter_id": encounter.get("encounter_id")},
+        storage=storage,
+    )
+    append_audit_log(
+        AuditLogEntry(
+            audit_id=f"audit-{uuid.uuid4().hex[:12]}",
+            action="encounter_started",
+            actor="user_mode",
+            patient_id=his_patient_id,
+            encounter_id=his_encounter_id,
+            details={"public_encounter_id": encounter.get("encounter_id")},
+        ),
+        storage=storage,
+    )
+    enqueue_outbox_event(
+        event_type="ED_ENCOUNTER_STARTED",
+        encounter_id=his_encounter_id,
+        payload={"patient_id": his_patient_id, "public_encounter_id": encounter.get("encounter_id")},
+        storage=storage,
+    )
+    _write_his_summary(encounter, storage=storage)
+
+
+def _sync_handoff_request_to_his(encounter: Dict[str, Any], ticket: Dict[str, Any]) -> None:
+    storage = _get_his_storage()
+    his_patient_id, his_encounter_id = _ensure_his_identifiers(encounter)
+    record = HandoffSnapshotRecord(
+        snapshot_id=f"handoff-{ticket['handoff_ticket_id']}-requested",
+        encounter_id=his_encounter_id,
+        patient_id=his_patient_id,
+        from_role="ED",
+        to_role=str(ticket["target_system"]),
+        handoff_stage="requested",
+        patient_brief=str(ticket["reason"]),
+        current_state={
+            "public_encounter_id": encounter.get("encounter_id"),
+            "public_ticket_id": ticket.get("handoff_ticket_id"),
+            "final_state": encounter.get("final_state"),
+        },
+        pending_tasks=[{"task": "handoff_acceptance", "target_system": ticket["target_system"]}],
+    )
+    write_handoff_snapshot(record, storage=storage)
+    _append_his_event(
+        his_patient_id=his_patient_id,
+        his_encounter_id=his_encounter_id,
+        event_type="handoff_requested",
+        source="user_mode.request_handoff",
+        payload={"ticket_id": ticket["handoff_ticket_id"], "target_system": ticket["target_system"], "reason": ticket["reason"]},
+        storage=storage,
+    )
+    append_audit_log(
+        AuditLogEntry(
+            audit_id=f"audit-{uuid.uuid4().hex[:12]}",
+            action="handoff_requested",
+            actor="user_mode",
+            patient_id=his_patient_id,
+            encounter_id=his_encounter_id,
+            details={"ticket_id": ticket["handoff_ticket_id"], "target_system": ticket["target_system"]},
+        ),
+        storage=storage,
+    )
+    enqueue_outbox_event(
+        event_type=f"ED_PATIENT_READY_FOR_{ticket['target_system']}",
+        encounter_id=his_encounter_id,
+        payload={"patient_id": his_patient_id, "ticket_id": ticket["handoff_ticket_id"]},
+        storage=storage,
+    )
+    _write_his_summary(encounter, storage=storage)
+
+
+def _sync_handoff_completion_to_his(encounter: Dict[str, Any], ticket: Dict[str, Any]) -> None:
+    storage = _get_his_storage()
+    his_patient_id, his_encounter_id = _ensure_his_identifiers(encounter)
+    handoff_stage = "completed" if ticket["status"] == "COMPLETED" else "requested"
+    record = HandoffSnapshotRecord(
+        snapshot_id=f"handoff-{ticket['handoff_ticket_id']}-completed",
+        encounter_id=his_encounter_id,
+        patient_id=his_patient_id,
+        from_role="ED",
+        to_role=str(ticket["receiver_system"] or ticket["target_system"]),
+        handoff_stage=handoff_stage,
+        patient_brief=str(ticket["reason"]),
+        current_state={
+            "public_encounter_id": encounter.get("encounter_id"),
+            "public_ticket_id": ticket.get("handoff_ticket_id"),
+            "final_state": encounter.get("final_state"),
+            "receiver_bed": ticket.get("receiver_bed"),
+        },
+        completed_actions=[{"event": "handoff_completed", "status": ticket["status"]}],
+    )
+    write_handoff_snapshot(record, storage=storage)
+    update_encounter_state(
+        his_encounter_id,
+        status=str(encounter.get("handoff_status", "COMPLETED")),
+        current_zone=str(encounter.get("final_state") or "TRANSFER"),
+        storage=storage,
+    )
+    record_clinical_assessment(
+        ClinicalAssessmentRecord(
+            encounter_id=his_encounter_id,
+            patient_id=his_patient_id,
+            assessment_id=f"assessment-{ticket['handoff_ticket_id']}",
+            author_role="doctor",
+            findings={"reason": ticket["reason"], "receiver_system": ticket["receiver_system"]},
+        ),
+        storage=storage,
+    )
+    record_diagnosis(
+        DiagnosisRecord(
+            encounter_id=his_encounter_id,
+            patient_id=his_patient_id,
+            diagnosis_id=f"dx-{ticket['handoff_ticket_id']}",
+            label=str(encounter.get("final_state") or ticket["receiver_system"]),
+            details={"handoff_status": ticket["status"]},
+        ),
+        storage=storage,
+    )
+    _append_his_event(
+        his_patient_id=his_patient_id,
+        his_encounter_id=his_encounter_id,
+        event_type="handoff_completed",
+        source="user_mode.complete_handoff",
+        payload={
+            "ticket_id": ticket["handoff_ticket_id"],
+            "receiver_system": ticket["receiver_system"],
+            "receiver_bed": ticket["receiver_bed"],
+            "status": ticket["status"],
+        },
+        storage=storage,
+    )
+    append_audit_log(
+        AuditLogEntry(
+            audit_id=f"audit-{uuid.uuid4().hex[:12]}",
+            action="handoff_completed",
+            actor="user_mode",
+            patient_id=his_patient_id,
+            encounter_id=his_encounter_id,
+            details={"ticket_id": ticket["handoff_ticket_id"], "status": ticket["status"]},
+        ),
+        storage=storage,
+    )
+    enqueue_outbox_event(
+        event_type="ED_HANDOFF_COMPLETED",
+        encounter_id=his_encounter_id,
+        payload={"patient_id": his_patient_id, "ticket_id": ticket["handoff_ticket_id"], "status": ticket["status"]},
+        storage=storage,
+    )
+    _write_his_summary(encounter, storage=storage)
 
 
 def _normalize_text(text: str) -> str:
@@ -699,6 +1116,7 @@ def _ensure_user_session() -> Dict[str, Any]:
                 "target_zone": "triage_waiting_area",
                 "instruction": "Please wait near triage waiting area.",
             },
+            "auto_persona_name": None,
         }
     return _USER_MODE_SESSION
 
@@ -756,6 +1174,32 @@ def _remember_intake(session: Dict[str, Any], msg: str) -> None:
 
 
 def _queue_metrics(session: Dict[str, Any]) -> Dict[str, int]:
+    auto_snapshot = _load_auto_runtime_snapshot()
+    encounter = _ENCOUNTERS.get(session.get("encounter_id")) if session.get("encounter_id") else None
+    if (
+        session["phase"] == "WAITING_CALL"
+        and encounter is not None
+        and auto_snapshot.get("available")
+        and not _is_green_channel_encounter(encounter)
+    ):
+        triage = dict(session.get("shared_memory", {}).get("triage", {}) or {})
+        ctas = int(triage.get("ctas_compat") or triage.get("level_1_4") or 3)
+        priority_factor = float(auto_snapshot.get("priority_factor") or 2)
+        user_priority = ctas * priority_factor
+        queue_entries = list(auto_snapshot.get("doctor_queue_entries", []) or [])
+        own_name = str(session.get("auto_persona_name") or "").strip()
+        before_me = sum(
+            1
+            for entry in queue_entries
+            if str(entry.get("name") or "").strip() != own_name
+            and float(entry.get("priority", 9999)) <= user_priority
+        )
+        est_wait = max(0, before_me * (2 if ctas <= 2 else 5))
+        return {
+            "before_me": before_me,
+            "estimated_wait_minutes": est_wait,
+        }
+
     snap = queue_snapshot()
     before_me = 0
     if session["phase"] == "WAITING_CALL":
@@ -863,6 +1307,7 @@ def _maybe_auto_progress(session: Dict[str, Any]) -> None:
                 f"{session['patient_id']}, your number is called. Please proceed to the doctor now.",
                 event_type="number_called",
             )
+            _sync_user_patient_to_auto(session, enqueue_doctor=False, user_phase="DOCTOR_CALLED")
             session["current_agent"] = "DOCTOR"
             doctor_line = _agent_reply(
                 "DOCTOR",
@@ -894,6 +1339,7 @@ def _maybe_auto_progress(session: Dict[str, Any]) -> None:
         }
         session["shared_memory"]["handoff"] = complete
         _memory_touch(session)
+        _sync_user_patient_to_auto(session, enqueue_doctor=False, user_phase="DONE")
         line = _agent_reply(
             "BEDSIDE_NURSE",
             (
@@ -1179,6 +1625,7 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                 "target_zone": "doctor_assessment_zone",
                 "instruction": "Urgent triage channel activated. Please move to doctor assessment zone now.",
             }
+            _sync_user_patient_to_auto(session, enqueue_doctor=False, user_phase="DOCTOR_CALLED")
             doctor_line = _agent_reply(
                 "DOCTOR",
                 _doctor_opening_from_memory(session),
@@ -1200,6 +1647,7 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                 "target_zone": "triage_waiting_area",
                 "instruction": "Please wait in waiting room until your number is called.",
             }
+            _sync_user_patient_to_auto(session, enqueue_doctor=True, user_phase="WAITING_CALL")
             if session["queue_position"] > 0:
                 wait_line = _agent_reply(
                     "CALLING_NURSE",
@@ -1392,6 +1840,7 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                     "target_zone": "bedside_transfer_zone",
                     "instruction": f"Proceed to bedside transfer area for {target} arrangement.",
                 }
+                _sync_user_patient_to_auto(session, enqueue_doctor=False, user_phase="BED_NURSE_FLOW")
                 line = _agent_reply(
                     "DOCTOR",
                     _doctor_disposition_summary(
@@ -1420,6 +1869,7 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                     "target_zone": "outpatient_exit",
                     "instruction": "You can proceed to outpatient follow-up.",
                 }
+                _sync_user_patient_to_auto(session, enqueue_doctor=False, user_phase="DONE")
                 line = _agent_reply(
                     "DOCTOR",
                     "Assessment complete. Follow outpatient pathway for next management.",
@@ -1512,6 +1962,7 @@ def start_encounter(payload: Dict[str, Any]) -> Dict[str, Any]:
     encounter = {
         "encounter_id": encounter_id,
         "patient_id": patient_id,
+        "input_vitals": dict(cleaned["vitals"]),
         "triage": result["triage"],
         "state_trace": result["state_trace"],
         "final_state": result["final_state"],
@@ -1520,6 +1971,7 @@ def start_encounter(payload: Dict[str, Any]) -> Dict[str, Any]:
         "handoff_status": "NONE",
     }
     _ENCOUNTERS[encounter_id] = encounter
+    _sync_encounter_to_his(encounter)
 
     return {
         "encounter_id": encounter_id,
@@ -1565,6 +2017,7 @@ def request_handoff(payload: Dict[str, Any]) -> Dict[str, Any]:
     encounter["handoff_status"] = "REQUESTED"
     encounter["updated_at"] = created_at
     encounter["last_handoff_ticket_id"] = ticket_id
+    _sync_handoff_request_to_his(encounter, ticket)
 
     return {
         "handoff_ticket_id": ticket_id,
@@ -1612,6 +2065,7 @@ def complete_handoff(payload: Dict[str, Any]) -> Dict[str, Any]:
     else:
         encounter["handoff_status"] = "REJECTED"
         encounter["final_state"] = "AWAITING_DISPOSITION"
+    _sync_handoff_completion_to_his(encounter, ticket)
 
     req_ts = _parse_iso(ticket["created_at"])
     done_ts = _parse_iso(accepted_at)
@@ -1650,7 +2104,7 @@ def queue_snapshot() -> Dict[str, Any]:
     completed = sum(1 for t in _HANDOFF_TICKETS.values() if t["status"] == "COMPLETED")
     rejected = sum(1 for t in _HANDOFF_TICKETS.values() if t["status"] == "REJECTED")
 
-    return {
+    result = {
         "total_encounters": len(_ENCOUNTERS),
         "active_encounters": active_encounters,
         "waiting_for_physician": waiting_for_physician,
@@ -1664,6 +2118,15 @@ def queue_snapshot() -> Dict[str, Any]:
             "total_tickets": len(_HANDOFF_TICKETS),
         },
     }
+    auto_snapshot = _load_auto_runtime_snapshot()
+    if auto_snapshot.get("available"):
+        result["auto_runtime"] = {
+            "sim_code": auto_snapshot.get("sim_code"),
+            "doctor_global_queue": auto_snapshot.get("doctor_global_queue", 0),
+            "triage_queue": auto_snapshot.get("triage_queue", 0),
+            "priority_factor": auto_snapshot.get("priority_factor", 2),
+        }
+    return result
 
 
 def reset_runtime_state() -> None:

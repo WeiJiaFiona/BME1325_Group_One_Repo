@@ -88,7 +88,7 @@
     </label>
 
     <label>Random Seed
-      <input id="seed" type="number" value="null">
+      <input id="seed" type="number" value="1337">
     </label>
 
     <label>Patient Walkout Probability
@@ -219,6 +219,8 @@ input, select {
 const uiMode = "{{ ui_mode|default:'auto' }}";
 
 async function saveSettings() {
+  const seedInput = document.getElementById("seed").value;
+  const parsedSeed = Number(seedInput);
   const payload = {
     fill_injuries: Number(document.getElementById("fill_injuries").value),
     preload_waiting_room_patients: Number(document.getElementById("preload_waiting_room_patients").value),
@@ -236,7 +238,7 @@ async function saveSettings() {
     imaging_turnaround_minutes: Number(document.getElementById("imaging_turnaround_minutes").value),
     boarding_timeout_minutes: Number(document.getElementById("boarding_timeout_minutes").value),
     add_patient_threshold: Number(document.getElementById("add_patient_threshold").value),
-    seed: Number(document.getElementById("seed").value),
+    seed: Number.isFinite(parsedSeed) ? parsedSeed : 1337,
     patient_walkout_probability: Number(document.getElementById("patient_walkout_probability").value),
     patient_walkout_check_minutes: Number(document.getElementById("patient_walkout_check_minutes").value),
     patient_post_discharge_linger_probability: Number(document.getElementById("patient_post_discharge_linger_probability").value),

@@ -170,7 +170,7 @@ cython_debug/
 # Notebooks
 *.ipynb
 
-openai_config.json
+openai_config*.json
 
 # Docker build artifacts
 docker/*.log
@@ -178,6 +178,7 @@ docker/*.log
 storage/
 !app_core/his/storage/
 !app_core/his/storage/**
+app_core/his/storage/__pycache__/
 temp_storage/
 environment/frontend_server/compressed_storage/
 cost-logs/
@@ -196,3 +197,8 @@ verify_backend.err.log
 analysis/ctas_daily_metrics.csv
 analysis/patient_time_metrics.csv
 state_times.csv
+.env
+
+# Local HIS dev DB / runtime data
+data/*.sqlite3
+data/*.sqlite3-journal

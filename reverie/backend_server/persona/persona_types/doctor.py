@@ -85,6 +85,9 @@ class Doctor(Persona):
                     # Stale entry — clean it and keep looking
                     maze.patients_waiting_for_doctor.pop(i)
                     continue
+                if getattr(p.scratch, "user_controlled", False):
+                    i += 1
+                    continue
                 if p.scratch.state in ready_states:
                     selected = maze.patients_waiting_for_doctor.pop(i)
                     break

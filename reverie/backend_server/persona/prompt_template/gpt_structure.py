@@ -61,10 +61,23 @@ def _load_config_file() -> dict:
 def _config_from_env(base_config: Optional[dict] = None) -> dict:
     """Build openai_config from environment variables, falling back to file config."""
     base_config = base_config or {}
+    model_key = (
+        os.environ.get("OPENAI_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("EDSIM_MODEL_KEY")
+        or base_config.get("model-key", "")
+    )
+    embeddings_key = (
+        os.environ.get("EMBEDDINGS_KEY")
+        or os.environ.get("EDSIM_EMBEDDINGS_KEY")
+        or os.environ.get("OPENAI_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or base_config.get("embeddings-key", "")
+    )
     return {
         "client":               os.environ.get("OPENAI_CLIENT", base_config.get("client", "openai")),
         "model":                os.environ.get("OPENAI_MODEL", base_config.get("model", "")),
-        "model-key":            os.environ.get("OPENAI_KEY", base_config.get("model-key", "")),
+        "model-key":            model_key,
         "model-endpoint":       os.environ.get("OPENAI_ENDPOINT", base_config.get("model-endpoint", "")),
         "model-api-version":    os.environ.get("OPENAI_API_VERSION", ""),
         "model-costs": {
@@ -73,7 +86,7 @@ def _config_from_env(base_config: Optional[dict] = None) -> dict:
         },
         "embeddings-client":     os.environ.get("EMBEDDINGS_CLIENT", base_config.get("embeddings-client", "openai")),
         "embeddings":            os.environ.get("EMBEDDINGS_MODEL", base_config.get("embeddings", "")),
-        "embeddings-key":        os.environ.get("EMBEDDINGS_KEY", base_config.get("embeddings-key", "")),
+        "embeddings-key":        embeddings_key,
         "embeddings-endpoint":   os.environ.get("EMBEDDINGS_ENDPOINT", base_config.get("embeddings-endpoint", "")),
         "embeddings-api-version": os.environ.get("EMBEDDINGS_API_VERSION", ""),
         "embeddings-costs": {

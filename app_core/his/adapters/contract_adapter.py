@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
+import uuid
 
-from app_core.his.config import EVENT_ENVELOPE_FIELDS, FROZEN_ROUTE_NAMES
+from app_core.his.config import EVENT_ENVELOPE_FIELDS, FROZEN_ROUTE_NAMES, utc_now_iso
 
 PATIENT_ID_PATTERN = r"^P-[0-9a-f]{8}$"
 ENCOUNTER_ID_PATTERN = r"^E-\d{14}-[0-9a-f]{4}$"
@@ -55,13 +57,21 @@ def get_contract_field_mappings() -> tuple[ContractFieldMapping, ...]:
 
 
 def normalize_contract_identifiers(*, patient_id: str, encounter_id: str, ctas_level: str, zone: str) -> dict[str, str]:
-    # This placeholder intentionally preserves the frozen output keys without
-    # performing full validation or derivation yet.
+    if not re.fullmatch(PATIENT_ID_PATTERN, patient_id):
+        raise ValueError(f"patient_id must match {PATIENT_ID_PATTERN}")
+    if not re.fullmatch(ENCOUNTER_ID_PATTERN, encounter_id):
+        raise ValueError(f"encounter_id must match {ENCOUNTER_ID_PATTERN}")
+    normalized_ctas = str(ctas_level).strip().upper()
+    normalized_zone = str(zone).strip().lower()
+    if normalized_ctas not in FROZEN_CTAS_LEVELS:
+        raise ValueError(f"ctas_level must be one of {FROZEN_CTAS_LEVELS}")
+    if normalized_zone not in FROZEN_ZONE_VALUES:
+        raise ValueError(f"zone must be one of {FROZEN_ZONE_VALUES}")
     return {
         "patient_id": patient_id,
         "encounter_id": encounter_id,
-        "ctas_level": ctas_level,
-        "zone": zone,
+        "ctas_level": normalized_ctas,
+        "zone": normalized_zone,
     }
 
 
@@ -73,17 +83,40 @@ def get_event_envelope_fields() -> tuple[str, ...]:
     return EVENT_ENVELOPE_FIELDS
 
 
-def build_event_envelope_placeholder(*, event_type: str, patient_id: str, encounter_id: str, source: str) -> dict[str, str]:
-    # The adapter owns the normalization surface, but the concrete payload
-    # assembly should wait for the HIS write-path integration phase.
-    raise NotImplementedError(
-        "TODO: build the contract event envelope after the HIS write-path and route payloads are wired."
+def build_event_envelope(
+    *,
+    event_type: str,
+    patient_id: str,
+    encounter_id: str,
+    source: str,
+    payload: dict[str, object] | None = None,
+    occurred_at: str | None = None,
+    event_id: str | None = None,
+) -> dict[str, object]:
+    if not str(event_type).strip():
+        raise ValueError("event_type is required")
+    if not str(source).strip():
+        raise ValueError("source is required")
+    normalized = normalize_contract_identifiers(
+        patient_id=patient_id,
+        encounter_id=encounter_id,
+        ctas_level="L3",
+        zone="yellow",
     )
+    envelope = {
+        "event_id": event_id or f"evt-{uuid.uuid4().hex[:12]}",
+        "event_type": str(event_type).strip(),
+        "occurred_at": occurred_at or utc_now_iso(),
+        "patient_id": normalized["patient_id"],
+        "encounter_id": normalized["encounter_id"],
+        "source": str(source).strip(),
+        "payload": dict(payload or {}),
+    }
+    return {field: envelope[field] for field in EVENT_ENVELOPE_FIELDS}
 
 
 def derive_zone_from_ctas(ctas_level: str) -> str:
-    # Zone derivation rules should be finalized against the teacher contract and
-    # user-flow checkpoints before this becomes executable logic.
-    raise NotImplementedError(
-        "TODO: derive contract-facing zone from CTAS once the triage normalization rules are frozen."
-    )
+    normalized = str(ctas_level).strip().upper()
+    if normalized not in CTAS_TO_ZONE_HINTS:
+        raise ValueError(f"ctas_level must be one of {FROZEN_CTAS_LEVELS}")
+    return CTAS_TO_ZONE_HINTS[normalized]

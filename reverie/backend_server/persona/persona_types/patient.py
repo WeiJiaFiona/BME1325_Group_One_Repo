@@ -291,6 +291,10 @@ class Patient(Persona):
 
         # If Patient isn't talking with other agent, control their movement
         if(self.scratch.chatting_with == None):
+            if getattr(self.scratch, "user_controlled", False):
+                plan = str(self.scratch.next_step or "ed map:emergency department:waiting room:waiting room chair")
+                return self.execute(maze, personas, plan)
+
             assigned_doctor = personas.get(str(self.scratch.assigned_doctor), None)
 
             # If assigned_doctor name is set but the doctor object is gone, clear

@@ -1,5 +1,7 @@
 from .contract_adapter import (
     ContractFieldMapping,
+    build_event_envelope,
+    derive_zone_from_ctas,
     get_contract_field_mappings,
     get_contract_route_names,
     get_event_envelope_fields,
@@ -8,18 +10,34 @@ from .contract_adapter import (
 from .memory_adapter import (
     MemoryToHisMappingExpectation,
     PendingHisWritePlan,
+    build_timeline_export_plan,
     get_memory_to_his_mapping_expectation,
     get_memory_upgrade_plan,
+    map_current_summary_to_his_write,
+    map_handoff_snapshot_to_his_writes,
+    map_memory_item_to_his_writes,
+    persist_current_summary,
+    persist_handoff_snapshot,
+    persist_memory_item,
 )
 
 __all__ = [
     "ContractFieldMapping",
     "MemoryToHisMappingExpectation",
     "PendingHisWritePlan",
+    "build_event_envelope",
+    "build_timeline_export_plan",
+    "derive_zone_from_ctas",
     "get_contract_field_mappings",
     "get_contract_route_names",
     "get_event_envelope_fields",
     "get_memory_to_his_mapping_expectation",
     "get_memory_upgrade_plan",
+    "map_current_summary_to_his_write",
+    "map_handoff_snapshot_to_his_writes",
+    "map_memory_item_to_his_writes",
     "normalize_contract_identifiers",
+    "persist_current_summary",
+    "persist_handoff_snapshot",
+    "persist_memory_item",
 ]

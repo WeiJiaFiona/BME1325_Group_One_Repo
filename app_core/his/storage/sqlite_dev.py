@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import sqlite3
-from typing import Any, TypeVar
+from typing import Any, Optional, Type, TypeVar
 
 from app_core.his.config import DEFAULT_SQLITE_DEV_PATH, POSTGRES_MIGRATION_SEQUENCE
 from app_core.his.exchange.outbox import OutboxEvent
@@ -176,21 +176,21 @@ class SQLiteDevHisStorage(HisStorage):
         self._replace("patients", patient.patient_id, patient.to_dict(), patient_id=patient.patient_id)
         return patient
 
-    def get_patient(self, patient_id: str) -> PatientRecord | None:
+    def get_patient(self, patient_id: str) -> Optional[PatientRecord]:
         return self._fetch_one("patients", "patient_id", patient_id, PatientRecord)
 
     def upsert_provider(self, provider: ProviderRecord) -> ProviderRecord:
         self._replace("providers", provider.provider_id, provider.to_dict())
         return provider
 
-    def get_provider(self, provider_id: str) -> ProviderRecord | None:
+    def get_provider(self, provider_id: str) -> Optional[ProviderRecord]:
         return self._fetch_one("providers", "record_id", provider_id, ProviderRecord)
 
     def upsert_department(self, department: DepartmentRecord) -> DepartmentRecord:
         self._replace("departments", department.department_id, department.to_dict())
         return department
 
-    def get_department(self, department_id: str) -> DepartmentRecord | None:
+    def get_department(self, department_id: str) -> Optional[DepartmentRecord]:
         return self._fetch_one("departments", "record_id", department_id, DepartmentRecord)
 
     def create_encounter(self, encounter: EncounterRecord) -> EncounterRecord:
@@ -203,7 +203,7 @@ class SQLiteDevHisStorage(HisStorage):
         )
         return encounter
 
-    def get_encounter(self, encounter_id: str) -> EncounterRecord | None:
+    def get_encounter(self, encounter_id: str) -> Optional[EncounterRecord]:
         return self._fetch_one("encounters", "encounter_id", encounter_id, EncounterRecord)
 
     def update_encounter(self, encounter: EncounterRecord) -> EncounterRecord:
@@ -219,7 +219,7 @@ class SQLiteDevHisStorage(HisStorage):
         )
         return triage
 
-    def get_triage(self, encounter_id: str) -> TriageRecord | None:
+    def get_triage(self, encounter_id: str) -> Optional[TriageRecord]:
         return self._fetch_one("triage_records", "encounter_id", encounter_id, TriageRecord)
 
     def append_vital_signs(self, vitals: VitalSignsRecord) -> VitalSignsRecord:
@@ -271,7 +271,7 @@ class SQLiteDevHisStorage(HisStorage):
         )
         return order
 
-    def get_order(self, order_id: str) -> OrderRecord | None:
+    def get_order(self, order_id: str) -> Optional[OrderRecord]:
         return self._fetch_one("orders", "record_id", order_id, OrderRecord)
 
     def create_lab_request(self, request: LabRequestRecord) -> LabRequestRecord:
@@ -337,7 +337,7 @@ class SQLiteDevHisStorage(HisStorage):
         )
         return summary
 
-    def get_current_summary(self, encounter_id: str) -> CurrentSummaryRecord | None:
+    def get_current_summary(self, encounter_id: str) -> Optional[CurrentSummaryRecord]:
         return self._fetch_one("current_summaries", "encounter_id", encounter_id, CurrentSummaryRecord)
 
     def write_clinical_document(self, document: ClinicalDocumentRecord) -> ClinicalDocumentRecord:
@@ -386,7 +386,7 @@ class SQLiteDevHisStorage(HisStorage):
         )
         return entry
 
-    def list_audits(self, encounter_id: str | None = None) -> list[AuditLogEntry]:
+    def list_audits(self, encounter_id: Optional[str] = None) -> list[AuditLogEntry]:
         return self._fetch_optional_many("audit_logs", encounter_id, AuditLogEntry)
 
     def append_outbox_event(self, event: OutboxEvent) -> OutboxEvent:
@@ -400,7 +400,7 @@ class SQLiteDevHisStorage(HisStorage):
         )
         return event
 
-    def list_outbox_events(self, encounter_id: str | None = None) -> list[OutboxEvent]:
+    def list_outbox_events(self, encounter_id: Optional[str] = None) -> list[OutboxEvent]:
         return self._fetch_optional_many("outbox_events", encounter_id, OutboxEvent)
 
     def as_storage(self) -> HisStorage:
@@ -428,7 +428,7 @@ class SQLiteDevHisStorage(HisStorage):
             )
             conn.commit()
 
-    def _fetch_one(self, table: str, column: str, value: str, cls: type[T]) -> T | None:
+    def _fetch_one(self, table: str, column: str, value: str, cls: Type[T]) -> Optional[T]:
         with self._connect() as conn:
             row = conn.execute(f"SELECT payload FROM {table} WHERE {column} = ? LIMIT 1", (value,)).fetchone()
         if row is None:
@@ -438,7 +438,7 @@ class SQLiteDevHisStorage(HisStorage):
     def _fetch_many(self, table: str, encounter_id: str, cls: type[T]) -> list[T]:
         return self._fetch_optional_many(table, encounter_id, cls)
 
-    def _fetch_optional_many(self, table: str, encounter_id: str | None, cls: type[T]) -> list[T]:
+    def _fetch_optional_many(self, table: str, encounter_id: Optional[str], cls: Type[T]) -> list[T]:
         with self._connect() as conn:
             if encounter_id is None:
                 rows = conn.execute(f"SELECT payload FROM {table} ORDER BY rowid ASC").fetchall()

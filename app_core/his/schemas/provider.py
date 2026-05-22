@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 from app_core.his.config import utc_now_iso
 
@@ -13,7 +13,7 @@ class ProviderRecord:
     provider_id: str
     full_name: str
     role: str
-    department_id: str | None = None
+    department_id: Optional[str] = None
     created_at: str = field(default_factory=utc_now_iso)
 
     def __post_init__(self) -> None:

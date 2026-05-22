@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Optional
 
 from app_core.his.config import utc_now_iso
 from app_core.his.schemas import (
@@ -15,11 +16,11 @@ from app_core.his.storage.base import HisStorage
 from ._shared import resolve_storage
 
 
-def open_encounter(encounter: EncounterRecord, storage: HisStorage | None = None) -> EncounterRecord:
+def open_encounter(encounter: EncounterRecord, storage: Optional[HisStorage] = None) -> EncounterRecord:
     return resolve_storage(storage).create_encounter(encounter)
 
 
-def get_encounter(encounter_id: str, storage: HisStorage | None = None) -> EncounterRecord | None:
+def get_encounter(encounter_id: str, storage: Optional[HisStorage] = None) -> Optional[EncounterRecord]:
     return resolve_storage(storage).get_encounter(encounter_id)
 
 
@@ -27,9 +28,9 @@ def update_encounter_state(
     encounter_id: str,
     *,
     status: str,
-    current_zone: str | None = None,
-    ctas_level: str | None = None,
-    storage: HisStorage | None = None,
+    current_zone: Optional[str] = None,
+    ctas_level: Optional[str] = None,
+    storage: Optional[HisStorage] = None,
 ) -> EncounterRecord:
     backend = resolve_storage(storage)
     existing = backend.get_encounter(encounter_id)
@@ -45,24 +46,24 @@ def update_encounter_state(
     return backend.update_encounter(updated)
 
 
-def record_vital_signs(vitals: VitalSignsRecord, storage: HisStorage | None = None) -> VitalSignsRecord:
+def record_vital_signs(vitals: VitalSignsRecord, storage: Optional[HisStorage] = None) -> VitalSignsRecord:
     return resolve_storage(storage).append_vital_signs(vitals)
 
 
 def record_clinical_assessment(
     assessment: ClinicalAssessmentRecord,
-    storage: HisStorage | None = None,
+    storage: Optional[HisStorage] = None,
 ) -> ClinicalAssessmentRecord:
     return resolve_storage(storage).append_clinical_assessment(assessment)
 
 
-def record_diagnosis(diagnosis: DiagnosisRecord, storage: HisStorage | None = None) -> DiagnosisRecord:
+def record_diagnosis(diagnosis: DiagnosisRecord, storage: Optional[HisStorage] = None) -> DiagnosisRecord:
     return resolve_storage(storage).append_diagnosis(diagnosis)
 
 
-def write_current_summary(summary: CurrentSummaryRecord, storage: HisStorage | None = None) -> CurrentSummaryRecord:
+def write_current_summary(summary: CurrentSummaryRecord, storage: Optional[HisStorage] = None) -> CurrentSummaryRecord:
     return resolve_storage(storage).write_current_summary(summary)
 
 
-def get_current_summary(encounter_id: str, storage: HisStorage | None = None) -> CurrentSummaryRecord | None:
+def get_current_summary(encounter_id: str, storage: Optional[HisStorage] = None) -> Optional[CurrentSummaryRecord]:
     return resolve_storage(storage).get_current_summary(encounter_id)

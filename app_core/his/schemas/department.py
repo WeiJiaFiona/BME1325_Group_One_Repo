@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 from app_core.his.config import utc_now_iso
 
@@ -12,7 +12,7 @@ from ._base import optional_str, require_str
 class DepartmentRecord:
     department_id: str
     department_name: str
-    zone: str | None = None
+    zone: Optional[str] = None
     created_at: str = field(default_factory=utc_now_iso)
 
     def __post_init__(self) -> None:

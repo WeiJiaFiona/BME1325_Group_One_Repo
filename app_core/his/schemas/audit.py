@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 from app_core.his.config import EVENT_ENVELOPE_FIELDS, utc_now_iso
 
@@ -41,8 +41,8 @@ class AuditLogEntry:
     audit_id: str
     action: str
     actor: str
-    patient_id: str | None = None
-    encounter_id: str | None = None
+    patient_id: Optional[str] = None
+    encounter_id: Optional[str] = None
     details: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=utc_now_iso)
 

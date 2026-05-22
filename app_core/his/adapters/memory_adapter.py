@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional, Dict
 import uuid
 
 from app_core.his.adapters.contract_adapter import build_event_envelope, derive_zone_from_ctas
@@ -31,7 +32,7 @@ class PendingHisWritePlan:
     service_entrypoint: str
     required_fields: tuple[str, ...]
     notes: str
-    payload: dict[str, object] | None = None
+    payload: Optional[Dict[str, object]] = None
 
 
 @dataclass(frozen=True)

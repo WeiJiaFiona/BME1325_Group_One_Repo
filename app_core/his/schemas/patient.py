@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 from app_core.his.config import generate_patient_id, utc_now_iso
 
@@ -11,11 +11,11 @@ from ._base import optional_str, require_dict, require_str
 @dataclass(frozen=True)
 class PatientRecord:
     patient_id: str = field(default_factory=generate_patient_id)
-    mrn: str | None = None
+    mrn: Optional[str] = None
     full_name: str = "Unknown Patient"
-    sex: str | None = None
-    date_of_birth: str | None = None
-    phone: str | None = None
+    sex: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    phone: Optional[str] = None
     identifiers: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=utc_now_iso)
 

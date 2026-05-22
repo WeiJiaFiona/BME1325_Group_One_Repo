@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Optional
 
 from app_core.his.schemas import (
     AuditLogEntry,
@@ -36,25 +37,25 @@ class HisStorage(ABC):
     def upsert_provider(self, provider: ProviderRecord) -> ProviderRecord: ...
 
     @abstractmethod
-    def get_provider(self, provider_id: str) -> ProviderRecord | None: ...
+    def get_provider(self, provider_id: str) -> Optional[ProviderRecord]: ...
 
     @abstractmethod
     def upsert_department(self, department: DepartmentRecord) -> DepartmentRecord: ...
 
     @abstractmethod
-    def get_department(self, department_id: str) -> DepartmentRecord | None: ...
+    def get_department(self, department_id: str) -> Optional[DepartmentRecord]: ...
 
     @abstractmethod
     def upsert_patient(self, patient: PatientRecord) -> PatientRecord: ...
 
     @abstractmethod
-    def get_patient(self, patient_id: str) -> PatientRecord | None: ...
+    def get_patient(self, patient_id: str) -> Optional[PatientRecord]: ...
 
     @abstractmethod
     def create_encounter(self, encounter: EncounterRecord) -> EncounterRecord: ...
 
     @abstractmethod
-    def get_encounter(self, encounter_id: str) -> EncounterRecord | None: ...
+    def get_encounter(self, encounter_id: str) -> Optional[EncounterRecord]: ...
 
     @abstractmethod
     def update_encounter(self, encounter: EncounterRecord) -> EncounterRecord: ...
@@ -63,7 +64,7 @@ class HisStorage(ABC):
     def write_triage(self, triage: TriageRecord) -> TriageRecord: ...
 
     @abstractmethod
-    def get_triage(self, encounter_id: str) -> TriageRecord | None: ...
+    def get_triage(self, encounter_id: str) -> Optional[TriageRecord]: ...
 
     @abstractmethod
     def append_vital_signs(self, vitals: VitalSignsRecord) -> VitalSignsRecord: ...
@@ -87,7 +88,7 @@ class HisStorage(ABC):
     def create_order(self, order: OrderRecord) -> OrderRecord: ...
 
     @abstractmethod
-    def get_order(self, order_id: str) -> OrderRecord | None: ...
+    def get_order(self, order_id: str) -> Optional[OrderRecord]: ...
 
     @abstractmethod
     def create_lab_request(self, request: LabRequestRecord) -> LabRequestRecord: ...
@@ -111,7 +112,7 @@ class HisStorage(ABC):
     def write_current_summary(self, summary: CurrentSummaryRecord) -> CurrentSummaryRecord: ...
 
     @abstractmethod
-    def get_current_summary(self, encounter_id: str) -> CurrentSummaryRecord | None: ...
+    def get_current_summary(self, encounter_id: str) -> Optional[CurrentSummaryRecord]: ...
 
     @abstractmethod
     def write_clinical_document(self, document: ClinicalDocumentRecord) -> ClinicalDocumentRecord: ...
@@ -132,13 +133,13 @@ class HisStorage(ABC):
     def append_audit(self, entry: AuditLogEntry) -> AuditLogEntry: ...
 
     @abstractmethod
-    def list_audits(self, encounter_id: str | None = None) -> list[AuditLogEntry]: ...
+    def list_audits(self, encounter_id: Optional[str] = None) -> list[AuditLogEntry]: ...
 
     @abstractmethod
     def append_outbox_event(self, event: OutboxEvent) -> OutboxEvent: ...
 
     @abstractmethod
-    def list_outbox_events(self, encounter_id: str | None = None) -> list[OutboxEvent]: ...
+    def list_outbox_events(self, encounter_id: Optional[str] = None) -> list[OutboxEvent]: ...
 
 
 @dataclass
@@ -168,28 +169,28 @@ class InMemoryHisStorage(HisStorage):
         self.providers[provider.provider_id] = provider
         return provider
 
-    def get_provider(self, provider_id: str) -> ProviderRecord | None:
+    def get_provider(self, provider_id: str) -> Optional[ProviderRecord]:
         return self.providers.get(provider_id)
 
     def upsert_department(self, department: DepartmentRecord) -> DepartmentRecord:
         self.departments[department.department_id] = department
         return department
 
-    def get_department(self, department_id: str) -> DepartmentRecord | None:
+    def get_department(self, department_id: str) -> Optional[DepartmentRecord]:
         return self.departments.get(department_id)
 
     def upsert_patient(self, patient: PatientRecord) -> PatientRecord:
         self.patients[patient.patient_id] = patient
         return patient
 
-    def get_patient(self, patient_id: str) -> PatientRecord | None:
+    def get_patient(self, patient_id: str) -> Optional[PatientRecord]:
         return self.patients.get(patient_id)
 
     def create_encounter(self, encounter: EncounterRecord) -> EncounterRecord:
         self.encounters[encounter.encounter_id] = encounter
         return encounter
 
-    def get_encounter(self, encounter_id: str) -> EncounterRecord | None:
+    def get_encounter(self, encounter_id: str) -> Optional[EncounterRecord]:
         return self.encounters.get(encounter_id)
 
     def update_encounter(self, encounter: EncounterRecord) -> EncounterRecord:
@@ -200,7 +201,7 @@ class InMemoryHisStorage(HisStorage):
         self.triage_records[triage.encounter_id] = triage
         return triage
 
-    def get_triage(self, encounter_id: str) -> TriageRecord | None:
+    def get_triage(self, encounter_id: str) -> Optional[TriageRecord]:
         return self.triage_records.get(encounter_id)
 
     def append_vital_signs(self, vitals: VitalSignsRecord) -> VitalSignsRecord:
@@ -228,7 +229,7 @@ class InMemoryHisStorage(HisStorage):
         self.orders[order.order_id] = order
         return order
 
-    def get_order(self, order_id: str) -> OrderRecord | None:
+    def get_order(self, order_id: str) -> Optional[OrderRecord]:
         return self.orders.get(order_id)
 
     def create_lab_request(self, request: LabRequestRecord) -> LabRequestRecord:
@@ -258,7 +259,7 @@ class InMemoryHisStorage(HisStorage):
         self.summaries[summary.encounter_id] = summary
         return summary
 
-    def get_current_summary(self, encounter_id: str) -> CurrentSummaryRecord | None:
+    def get_current_summary(self, encounter_id: str) -> Optional[CurrentSummaryRecord]:
         return self.summaries.get(encounter_id)
 
     def write_clinical_document(self, document: ClinicalDocumentRecord) -> ClinicalDocumentRecord:
@@ -283,7 +284,7 @@ class InMemoryHisStorage(HisStorage):
         self.audits.append(entry)
         return entry
 
-    def list_audits(self, encounter_id: str | None = None) -> list[AuditLogEntry]:
+    def list_audits(self, encounter_id: Optional[str] = None) -> list[AuditLogEntry]:
         if encounter_id is None:
             return list(self.audits)
         return [item for item in self.audits if item.encounter_id == encounter_id]
@@ -292,7 +293,7 @@ class InMemoryHisStorage(HisStorage):
         self.outbox.append(event)
         return event
 
-    def list_outbox_events(self, encounter_id: str | None = None) -> list[OutboxEvent]:
+    def list_outbox_events(self, encounter_id: Optional[str] = None) -> list[OutboxEvent]:
         if encounter_id is None:
             return list(self.outbox)
         return [item for item in self.outbox if item.encounter_id == encounter_id]

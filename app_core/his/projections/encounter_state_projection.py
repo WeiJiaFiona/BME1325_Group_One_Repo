@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from app_core.his.schemas import CurrentSummaryRecord, EventRegistryEntry
 
 
 def project_encounter_state(
     *,
     encounter_id: str,
-    latest_summary: CurrentSummaryRecord | None,
-    latest_event: EventRegistryEntry | None,
+    latest_summary: Optional[CurrentSummaryRecord],
+    latest_event: Optional[EventRegistryEntry],
 ) -> dict[str, object]:
     return {
         "encounter_id": encounter_id,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
+from typing import Optional
 import uuid
 
 ID_PREFIX_PATIENT = "P"
@@ -41,7 +42,7 @@ def generate_patient_id() -> str:
     return f"{ID_PREFIX_PATIENT}-{uuid.uuid4().hex[:8]}"
 
 
-def generate_encounter_id(now: datetime | None = None) -> str:
+def generate_encounter_id(now: Optional[datetime] = None) -> str:
     if now is None:
         instant = datetime.now(CN_TZ)
     elif now.tzinfo is None:

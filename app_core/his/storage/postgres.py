@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from app_core.his.config import POSTGRES_MIGRATION_SEQUENCE
 
@@ -11,9 +12,9 @@ from .base import HisStorage, InMemoryHisStorage, StorageError
 @dataclass
 class PostgresHisStorage:
     dsn: str
-    migrations_dir: Path | None = None
+    migrations_dir: Optional[Path] = None
     apply_on_bootstrap: bool = False
-    _delegate: InMemoryHisStorage | None = None
+    _delegate: Optional[InMemoryHisStorage] = None
 
     def bootstrap(self) -> list[Path]:
         if not self.dsn.strip():

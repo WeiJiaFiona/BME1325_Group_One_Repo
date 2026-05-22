@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional, Union
 
 from .base import HisStorage, InMemoryHisStorage, StorageError
 from .postgres import PostgresHisStorage
@@ -8,9 +9,9 @@ from app_core.his.config import HIS_DB_BACKEND
 
 def create_his_storage(
     *,
-    backend: str | None = None,
+    backend: Optional[str] = None,
     dsn: str = "",
-    sqlite_path: str | Path | None = None,
+    sqlite_path: Optional[Union[str, Path]] = None,
 ) -> HisStorage:
     resolved = (backend or HIS_DB_BACKEND).strip().lower()
     if resolved == "memory":

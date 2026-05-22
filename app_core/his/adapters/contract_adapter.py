@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import re
 import uuid
 
+from typing import Optional, Mapping, Any, Dict
+
 from app_core.his.config import EVENT_ENVELOPE_FIELDS, FROZEN_ROUTE_NAMES, utc_now_iso
 
 PATIENT_ID_PATTERN = r"^P-[0-9a-f]{8}$"
@@ -93,10 +95,10 @@ def build_event_envelope(
     patient_id: str,
     encounter_id: str,
     source: str,
-    payload: dict[str, object] | None = None,
-    occurred_at: str | None = None,
-    event_id: str | None = None,
-) -> dict[str, object]:
+    payload: Optional[Dict[str, object]] = None,
+    occurred_at: Optional[str] = None,
+    event_id: Optional[str] = None,
+) -> Dict[str, object]:
     if not str(event_type).strip():
         raise ValueError("event_type is required")
     if not str(source).strip():

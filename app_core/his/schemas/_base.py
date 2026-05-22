@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 
 def require_str(value: Any, field_name: str) -> str:
@@ -9,7 +9,7 @@ def require_str(value: Any, field_name: str) -> str:
     return value.strip()
 
 
-def optional_str(value: Any, field_name: str) -> str | None:
+def optional_str(value: Any, field_name: str) -> Optional[str]:
     if value is None:
         return None
     return require_str(value, field_name)

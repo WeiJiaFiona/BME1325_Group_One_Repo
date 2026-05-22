@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 from app_core.his.config import generate_encounter_id, utc_now_iso
 
@@ -14,8 +14,8 @@ class EncounterRecord:
     encounter_id: str = field(default_factory=generate_encounter_id)
     status: str = "OPEN"
     arrival_mode: str = "walk-in"
-    current_zone: str | None = None
-    ctas_level: str | None = None
+    current_zone: Optional[str] = None
+    ctas_level: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)

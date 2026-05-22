@@ -1,11 +1,16 @@
+import re
+
 from app_core.app.api_v1 import (
     ApiError,
     complete_handoff,
+    export_encounter_timeline,
+    get_encounter_summary,
     queue_snapshot,
     request_handoff,
     reset_runtime_state,
     start_encounter,
 )
+from app_core.his.adapters.contract_adapter import ENCOUNTER_ID_PATTERN, PATIENT_ID_PATTERN
 
 
 def setup_function():
@@ -26,7 +31,8 @@ def _new_encounter(chief_complaint="Chest pain with cold sweat", symptoms=None, 
 def test_start_contract_shape():
     data = _new_encounter()
     assert data["status"] == "STARTED"
-    assert data["encounter_id"].startswith("enc-")
+    assert re.fullmatch(ENCOUNTER_ID_PATTERN, data["encounter_id"])
+    assert re.fullmatch(PATIENT_ID_PATTERN, data["patient_id"])
     assert data["triage"]["acuity_ad"] in {"A", "B", "C", "D"}
     assert isinstance(data["state_trace"], list)
     assert "recommended_handoff_target" in data
@@ -135,3 +141,26 @@ def test_all_receiver_systems_supported():
             }
         )
         assert done["final_disposition_state"] == system
+
+
+def test_summary_and_timeline_views_are_available():
+    start_data = _new_encounter()
+    req = request_handoff(
+        {
+            "encounter_id": start_data["encounter_id"],
+            "target_system": "ICU",
+            "reason": "formal his test",
+        }
+    )
+    complete_handoff(
+        {
+            "handoff_ticket_id": req["handoff_ticket_id"],
+            "receiver_system": "ICU",
+            "accepted": True,
+            "receiver_bed": "ICU-22",
+        }
+    )
+    summary = get_encounter_summary(start_data["encounter_id"])
+    timeline = export_encounter_timeline(start_data["encounter_id"])
+    assert summary["summary"]["current_state"] == "icu"
+    assert timeline["document"]["document_type"] == "timeline_export"

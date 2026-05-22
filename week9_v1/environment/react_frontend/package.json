@@ -14,6 +14,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
+    "test:e2e:phaser": "playwright test -c playwright.phaser.config.ts",
     "test:e2e:install": "playwright install --with-deps chromium",
     "view-map": "vite --open",
     "generate-assets": "node scripts/generate-assets.mjs"

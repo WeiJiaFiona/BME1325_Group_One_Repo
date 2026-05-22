@@ -65,7 +65,7 @@ def _config_from_env(base_config: Optional[dict] = None) -> dict:
         "client":               os.environ.get("OPENAI_CLIENT", base_config.get("client", "openai")),
         "model":                os.environ.get("OPENAI_MODEL", base_config.get("model", "")),
         "model-key":            os.environ.get("OPENAI_KEY", base_config.get("model-key", "")),
-        "model-endpoint":       os.environ.get("OPENAI_ENDPOINT", base_config.get("model-endpoint", "")),
+        "model-endpoint":       os.environ.get("OPENAI_BASE_URL", os.environ.get("OPENAI_ENDPOINT", base_config.get("model-endpoint", ""))),
         "model-api-version":    os.environ.get("OPENAI_API_VERSION", ""),
         "model-costs": {
             "input":  float(os.environ.get("OPENAI_MODEL_COST_INPUT", base_config.get("model-costs", {}).get("input", "0.0"))),
@@ -74,7 +74,7 @@ def _config_from_env(base_config: Optional[dict] = None) -> dict:
         "embeddings-client":     os.environ.get("EMBEDDINGS_CLIENT", base_config.get("embeddings-client", "openai")),
         "embeddings":            os.environ.get("EMBEDDINGS_MODEL", base_config.get("embeddings", "")),
         "embeddings-key":        os.environ.get("EMBEDDINGS_KEY", base_config.get("embeddings-key", "")),
-        "embeddings-endpoint":   os.environ.get("EMBEDDINGS_ENDPOINT", base_config.get("embeddings-endpoint", "")),
+        "embeddings-endpoint":   os.environ.get("EMBEDDINGS_BASE_URL", os.environ.get("EMBEDDINGS_ENDPOINT", base_config.get("embeddings-endpoint", ""))),
         "embeddings-api-version": os.environ.get("EMBEDDINGS_API_VERSION", ""),
         "embeddings-costs": {
             "input":  float(os.environ.get("EMBEDDINGS_COST_INPUT", base_config.get("embeddings-costs", {}).get("input", "0.0"))),
@@ -108,15 +108,45 @@ def _default_local_only_config() -> dict:
         "cost-upperbound": float(os.environ.get("COST_UPPERBOUND", "100.0")),
     }
 
+
+def _normalize_openai_config(raw: Optional[dict]) -> dict:
+  """Backfill omitted keys so partial config files never crash at import time."""
+  merged = _default_local_only_config()
+  raw = raw or {}
+  merged.update(raw)
+
+  # Deep-merge nested cost dicts.
+  merged["model-costs"] = {
+    "input": float((raw.get("model-costs") or {}).get("input", merged["model-costs"]["input"])),
+    "output": float((raw.get("model-costs") or {}).get("output", merged["model-costs"]["output"])),
+  }
+  merged["embeddings-costs"] = {
+    "input": float((raw.get("embeddings-costs") or {}).get("input", merged["embeddings-costs"]["input"])),
+    "output": float((raw.get("embeddings-costs") or {}).get("output", merged["embeddings-costs"]["output"])),
+  }
+
+  # Canonical defaults/sanitization.
+  merged["client"] = str(merged.get("client") or "openai").lower()
+  merged["embeddings-client"] = str(merged.get("embeddings-client") or "openai").lower()
+  merged["model-endpoint"] = str(merged.get("model-endpoint") or "").rstrip("/")
+  merged["embeddings-endpoint"] = str(merged.get("embeddings-endpoint") or "").rstrip("/")
+  merged["model-key"] = str(merged.get("model-key") or "")
+  merged["embeddings-key"] = str(merged.get("embeddings-key") or "")
+  merged["model"] = str(merged.get("model") or "")
+  merged["embeddings"] = str(merged.get("embeddings") or "")
+  merged["experiment-name"] = str(merged.get("experiment-name") or "edsim")
+  merged["cost-upperbound"] = float(merged.get("cost-upperbound") or 100.0)
+  return merged
+
 if any(os.environ.get(var) for var in (
-    "OPENAI_KEY", "OPENAI_CLIENT", "OPENAI_MODEL", "OPENAI_ENDPOINT",
-    "EMBEDDINGS_CLIENT", "EMBEDDINGS_MODEL", "EMBEDDINGS_KEY", "EMBEDDINGS_ENDPOINT",
+    "OPENAI_KEY", "OPENAI_CLIENT", "OPENAI_MODEL", "OPENAI_ENDPOINT", "OPENAI_BASE_URL",
+    "EMBEDDINGS_CLIENT", "EMBEDDINGS_MODEL", "EMBEDDINGS_KEY", "EMBEDDINGS_ENDPOINT", "EMBEDDINGS_BASE_URL",
 )):
-    openai_config = _config_from_env(_FILE_CONFIG)
+    openai_config = _normalize_openai_config(_config_from_env(_FILE_CONFIG))
 elif _FILE_CONFIG:
-    openai_config = _FILE_CONFIG
+    openai_config = _normalize_openai_config(_FILE_CONFIG)
 else:
-    openai_config = _default_local_only_config()
+    openai_config = _normalize_openai_config(_default_local_only_config())
     os.environ.setdefault("LLM_MODE", "local_only")
     os.environ.setdefault("EMBEDDING_MODE", "local_only")
     print(

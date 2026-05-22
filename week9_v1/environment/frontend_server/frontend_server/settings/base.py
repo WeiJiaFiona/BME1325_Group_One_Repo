@@ -14,7 +14,19 @@ SECRET_KEY = 'c7l%1%b=2sh$o9zqvd4i*h8*__^@-5sm-y)m(1ib2t92)43@62'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["localhost", "127.0.0.1", "[::1]", "testserver"]
+LOCAL_DEV_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+    "[::1]",
+    "testserver",
+    "localhost.sangfor.com.cn",
+]
+ALLOWED_HOSTS = LOCAL_DEV_HOSTS
+CSRF_TRUSTED_ORIGINS = [
+    "http://127.0.0.1:8010",
+    "http://localhost:8010",
+    "http://localhost.sangfor.com.cn:8010",
+]
 
 
 # Application definition

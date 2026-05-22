@@ -1,8 +1,12 @@
+import re
+
 from app_core.app.api_v1 import (
+    export_encounter_timeline,
     reset_runtime_state,
     user_mode_chat_turn,
     user_mode_session_status,
 )
+from app_core.his.adapters.contract_adapter import PATIENT_ID_PATTERN
 
 
 def setup_function():
@@ -94,4 +98,26 @@ def test_user_mode_status_returns_pending_and_memory_version():
     assert "transcript_tail" in status
     assert "pending_messages" in status
     assert "memory_version" in status["session"]
-    assert status["session"]["patient_id"] == "Patient 1"
+    assert re.fullmatch(PATIENT_ID_PATTERN, status["session"]["patient_id"])
+
+
+def test_user_mode_can_export_timeline_after_completion():
+    user_mode_chat_turn("severe chest pain and shortness of breath")
+    latest = user_mode_session_status()
+    if latest["session"]["phase"] != "DOCTOR_CALLED":
+        latest = user_mode_chat_turn("status update")
+    for msg in [
+        "Pain started 30 minutes ago",
+        "It radiates to my arm and breathing is hard",
+        "No fever",
+        "I almost fainted",
+    ]:
+        latest = user_mode_chat_turn(msg)
+        if latest["session"]["phase"] == "DONE":
+            break
+    for _ in range(4):
+        if latest["session"]["phase"] == "DONE":
+            break
+        latest = user_mode_session_status()
+    timeline = export_encounter_timeline(latest["session"]["encounter_id"])
+    assert timeline["document"]["document_type"] == "timeline_export"

@@ -304,13 +304,47 @@ class TestDashboardRuntimeSync(TestCase):
             data = json.loads(response.content)
             self.assertIn("runtime_sync", data)
             self.assertIn("backend_health", data)
+            self.assertIn("runtime_trace", data)
             self.assertEqual(data["runtime_sync"]["status_step"], 3)
             self.assertEqual(data["runtime_sync"]["curr_step_pointer"], 4)
             self.assertEqual(data["runtime_sync"]["latest_movement_step"], 3)
             self.assertEqual(data["runtime_sync"]["latest_environment_step"], 4)
             self.assertTrue(data["runtime_sync"]["in_sync"])
+            self.assertEqual(data["runtime_trace"]["backend_movement_max_step"], 3)
+            self.assertEqual(data["runtime_trace"]["frontend_environment_max_step"], 4)
             self.assertIn("backend_alive", data["backend_health"])
             self.assertIsInstance(data["backend_health"]["backend_alive"], bool)
+
+    def test_live_dashboard_api_backfills_runtime_trace_run_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as storage_dir:
+            sim_code = "runid-sim"
+
+            def fake_temp_path(*parts):
+                return os.path.join(temp_dir, *parts)
+
+            def fake_storage_path(*parts):
+                return os.path.join(storage_dir, *parts)
+
+            os.makedirs(os.path.join(storage_dir, sim_code, "movement"), exist_ok=True)
+            os.makedirs(os.path.join(storage_dir, sim_code, "environment"), exist_ok=True)
+            with open(os.path.join(temp_dir, "curr_sim_code.json"), "w", encoding="utf-8") as f:
+                json.dump({"sim_code": sim_code}, f)
+            with open(os.path.join(storage_dir, sim_code, "sim_status.json"), "w", encoding="utf-8") as f:
+                json.dump({"step": 1}, f)
+            with open(os.path.join(storage_dir, sim_code, "movement", "1.json"), "w", encoding="utf-8") as f:
+                json.dump({"persona": {}, "meta": {}}, f)
+            with open(os.path.join(storage_dir, sim_code, "environment", "1.json"), "w", encoding="utf-8") as f:
+                json.dump({}, f)
+            with open(os.path.join(storage_dir, sim_code, "runtime_trace.json"), "w", encoding="utf-8") as f:
+                json.dump({"run_id": None, "backend_movement_max_step": 1}, f)
+
+            with patch("translator.views._temp_path", side_effect=fake_temp_path), \
+                 patch("translator.views._storage_path", side_effect=fake_storage_path):
+                response = self.client.get("/api/live_dashboard/")
+
+            self.assertEqual(response.status_code, 200)
+            data = json.loads(response.content)
+            self.assertTrue(data["runtime_trace"]["run_id"])
 
     def test_live_dashboard_api_flags_step_lag(self):
         with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as storage_dir:
@@ -550,20 +584,33 @@ class TestDataVisualizationAPI(TestCase):
 
 
 class TestSaveSimulationSettings(TestCase):
-    def test_missing_seed_falls_back_to_1337(self):
+    def test_missing_seed_persists_null_and_resets_runtime(self):
         with tempfile.TemporaryDirectory() as storage_dir:
             sim_code = "ed_sim_n5"
+            curr_sim_code = "curr_sim"
 
             def fake_storage_path(*parts):
                 return os.path.join(storage_dir, *parts)
 
             os.makedirs(os.path.join(storage_dir, sim_code, "reverie"), exist_ok=True)
+            os.makedirs(os.path.join(storage_dir, curr_sim_code, "movement"), exist_ok=True)
+            os.makedirs(os.path.join(storage_dir, curr_sim_code, "environment"), exist_ok=True)
             meta_path = os.path.join(storage_dir, sim_code, "reverie", "meta.json")
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump({"seed": None, "doctor_starting_amount": 1}, f)
+            with open(os.path.join(storage_dir, curr_sim_code, "movement", "5.json"), "w", encoding="utf-8") as f:
+                json.dump({"persona": {}}, f)
+            with open(os.path.join(storage_dir, curr_sim_code, "environment", "5.json"), "w", encoding="utf-8") as f:
+                json.dump({}, f)
+            with open(os.path.join(storage_dir, curr_sim_code, "sim_status.json"), "w", encoding="utf-8") as f:
+                json.dump({"step": 5}, f)
 
-            with patch("translator.views._storage_path", side_effect=fake_storage_path), \
+            with tempfile.TemporaryDirectory() as temp_dir, \
+                 patch("translator.views._storage_path", side_effect=fake_storage_path), \
+                 patch("translator.views._temp_path", side_effect=lambda *parts: os.path.join(temp_dir, *parts)), \
                  patch("translator.views._ensure_seed_sim_storage"):
+                with open(os.path.join(temp_dir, "curr_step.json"), "w", encoding="utf-8") as f:
+                    json.dump({"step": 6}, f)
                 response = self.client.post(
                     "/save_simulation_settings/",
                     data=json.dumps({"doctor_starting_amount": 2}),
@@ -575,8 +622,17 @@ class TestSaveSimulationSettings(TestCase):
             self.assertTrue(payload["ok"])
             with open(meta_path, "r", encoding="utf-8") as f:
                 updated_meta = json.load(f)
-            self.assertEqual(updated_meta["seed"], 1337)
+            self.assertIsNone(updated_meta["seed"])
             self.assertEqual(updated_meta["doctor_starting_amount"], 2)
+            self.assertFalse(os.path.exists(os.path.join(storage_dir, curr_sim_code, "movement", "5.json")))
+            self.assertFalse(os.path.exists(os.path.join(storage_dir, curr_sim_code, "environment", "5.json")))
+            self.assertFalse(os.path.exists(os.path.join(storage_dir, curr_sim_code, "sim_status.json")))
+            trace_path = os.path.join(storage_dir, curr_sim_code, "runtime_trace.json")
+            self.assertTrue(os.path.exists(trace_path))
+            with open(trace_path, "r", encoding="utf-8") as f:
+                trace_payload = json.load(f)
+            self.assertIn("run_id", trace_payload)
+            self.assertEqual(trace_payload["requested_seed"], None)
 
 
 class TestStartBackendSingleInstance(TestCase):

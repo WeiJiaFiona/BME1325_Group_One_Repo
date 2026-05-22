@@ -198,3 +198,34 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8010/send_sim_command/" `
   -ContentType "application/json" `
   -Body '{"command":"run 10"}'
 ```
+
+
+
+```bash
+# 0) 在 week9_v1 目录
+cd D:\projects\BME1325Spring2026\BME1325_Group_One_Repo\_tmp_week9_cleanup\week9_v1
+
+# 1) 先停掉旧 backend（把 30436 换成你当前 PID）
+Stop-Process -Id 30436 -Force
+
+# 2) 保存本次设置（这一步会触发 runtime reset）
+$body = @{
+  doctor_starting_amount = 1
+  triage_starting_amount = 1
+  bedside_starting_amount = 1
+  preload_waiting_room_patients = 1
+  fill_injuries = 0.3
+  add_patient_threshold = 0
+  seed = $null   # 空 seed = 随机；填数字就可复现
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8010/save_simulation_settings/" -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8010/start_backend/ed_sim_n5/curr_sim/"
+# 3) 启动 backend（做 UI 联调时不要加 headless=1）
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8010/start_backend/ed_sim_n5/curr_sim/"
+
+# 4) 发送 run 100
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8010/send_sim_command/" -ContentType "application/json" -Body '{"command":"run 100"}'
+
+# 5) 跑契约检查
+python scripts/verify_step_contract.py --sim-code curr_sim
+```

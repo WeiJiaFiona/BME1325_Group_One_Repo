@@ -584,6 +584,11 @@
 		};
 	}
 
+	function formatTileText(tile) {
+		if (!Array.isArray(tile) || tile.length < 2) return "--";
+		return `(${tile[0]}, ${tile[1]})`;
+	}
+
 	function updatePersonaPanels() {
 		for (let i = 0; i < Object.keys(personas).length; i++) {
 			let personaName = Object.keys(personas)[i];
@@ -591,17 +596,26 @@
 			let movementInfo = execute_movement["persona"][personaName];
 			let personaStatus = parsePersonaStatus(movementInfo);
 			let personaNameOs = personaName.replace(/ /g, "_");
-			let chatContent = "";
-			if (movementInfo["chat"] != null) {
-				for (let j = 0; j < movementInfo["chat"].length; j++) {
-					chatContent += movementInfo["chat"][j][0] + ": " + movementInfo["chat"][j][1] + "<br>";
-				}
-			} else {
-				chatContent = "<em>None at the moment</em>";
-			}
+			const role = roleForName(personaName);
+			const movementTarget = Array.isArray(movementInfo["movement"])
+				? [parseInt(movementInfo["movement"][0]), parseInt(movementInfo["movement"][1])]
+				: null;
+			const movementPath = Array.isArray(movementInfo["movement_path"])
+				? movementInfo["movement_path"]
+				: (Array.isArray(movementInfo["path_tiles"]) ? movementInfo["path_tiles"] : []);
+			const movementPathLength = movementPath.length;
+			const hasChat = Array.isArray(movementInfo["chat"]) && movementInfo["chat"].length > 0;
+			const sprite = personas[personaName];
+			const envTile = sprite ? getCurrentTileForSprite(sprite) : null;
+
+			document.getElementById("panel_step__" + personaNameOs).textContent = String(playback_step);
+			document.getElementById("panel_role__" + personaNameOs).textContent = `${role.tag} / ${roleKeyForName(personaName)}`;
 			document.getElementById("current_action__" + personaNameOs).innerHTML = personaStatus.action;
 			document.getElementById("target_address__" + personaNameOs).innerHTML = personaStatus.location;
-			document.getElementById("chat__" + personaNameOs).innerHTML = chatContent;
+			document.getElementById("panel_target__" + personaNameOs).textContent = formatTileText(movementTarget);
+			document.getElementById("panel_path_len__" + personaNameOs).textContent = String(movementPathLength);
+			document.getElementById("panel_env__" + personaNameOs).textContent = formatTileText(envTile);
+			document.getElementById("panel_chat_exists__" + personaNameOs).textContent = hasChat ? "yes" : "no";
 		}
 	}
 
@@ -929,7 +943,6 @@
 		const avatarPath = avatarPathForRole(roleKey);
 		const initialAction = currentAction || "<em>Waiting for first update</em>";
 		const initialLocation = location || "<em>Not available yet</em>";
-		const initialConversation = conversation || "<em>None at the moment</em>";
 		const newPersonaHtml = `
 			<div class="media" id="on_screen_det_content-${p_name_os}" data-role-key="${roleKey}" data-avatar-key="${avatarKey}" data-figure-key="${avatarKey}" style="background-color:#EEEEEE; padding:1em; padding-left:3.5em; padding-right:2em; border-radius:10px">
 				<div class="media-left media-middle">
@@ -945,9 +958,14 @@
 						</h2>
 					</div>
 					<div>
-						<p style="font-size:1.2em"><strong>Current Action:</strong><br><span id="current_action__${p_name_os}">${initialAction}</span></p>
-						<p style="font-size:1.2em"><strong>Location:</strong><br><span id="target_address__${p_name_os}">${initialLocation}</span></p>
-						<p style="font-size:1.2em"><strong>Current Conversation:</strong><br><span id="chat__${p_name_os}">${initialConversation}</span></p>
+						<p style="font-size:1.05em; margin-bottom:8px;"><strong>Step:</strong> <span id="panel_step__${p_name_os}">--</span></p>
+						<p style="font-size:1.05em; margin-bottom:8px;"><strong>Role / Badge:</strong> <span id="panel_role__${p_name_os}">--</span></p>
+						<p style="font-size:1.05em; margin-bottom:8px;"><strong>Description:</strong><br><span id="current_action__${p_name_os}">${initialAction}</span></p>
+						<p style="font-size:1.05em; margin-bottom:8px;"><strong>Movement Target:</strong> <span id="panel_target__${p_name_os}">--</span></p>
+						<p style="font-size:1.05em; margin-bottom:8px;"><strong>Movement Path Length:</strong> <span id="panel_path_len__${p_name_os}">--</span></p>
+						<p style="font-size:1.05em; margin-bottom:8px;"><strong>Environment X/Y:</strong> <span id="panel_env__${p_name_os}">--</span></p>
+						<p style="font-size:1.05em; margin-bottom:8px;"><strong>Chat Exists:</strong> <span id="panel_chat_exists__${p_name_os}">--</span></p>
+						<p style="font-size:1.05em; margin-bottom:0;"><strong>Location:</strong><br><span id="target_address__${p_name_os}">${initialLocation}</span></p>
 					</div>
 				</div>
 			</div>

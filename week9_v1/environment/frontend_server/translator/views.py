@@ -56,6 +56,7 @@ def _resolve_pointer_path(path: Path) -> Path:
 STORAGE_ROOT = _resolve_pointer_path(FRONTEND_ROOT / "storage")
 TEMP_ROOT = _resolve_pointer_path(Path(os.environ.get("EDSIM_TEMP_DIR", str(FRONTEND_ROOT / "temp_storage"))))
 fs_temp_storage = str(TEMP_ROOT)
+_UNSET = object()
 
 
 def _storage_path(*parts: str) -> str:
@@ -329,6 +330,15 @@ def _coerce_seed_value(raw_value, default: int = 1337) -> int:
         return default
 
 
+def _coerce_seed_or_none(raw_value):
+    if raw_value in ("", None):
+        return None
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _terminate_backend_processes(pids: list[int]) -> list[int]:
     terminated = []
     for pid in pids:
@@ -464,6 +474,205 @@ def _build_runtime_sync(sim_code: str, status_step: Optional[int] = None) -> dic
         "movement/<step>.json drives map execution; environment/<step>.json captures map position snapshots.",
     ]
     return runtime_sources
+
+
+def _runtime_trace_defaults() -> dict:
+    return {
+        "run_id": None,
+        "started_at": None,
+        "requested_seed": None,
+        "resolved_seed": None,
+        "backend_movement_max_step": None,
+        "frontend_environment_max_step": None,
+        "curr_step": None,
+        "last_update_step": None,
+        "last_process_step": None,
+        "lag": None,
+        "blocked_reason": "initializing",
+    }
+
+
+def _runtime_trace_path(sim_code: str) -> Path:
+    return Path(_storage_path(sim_code, "runtime_trace.json"))
+
+
+def _coerce_optional_int(value):
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_runtime_trace(sim_code: str) -> dict:
+    payload = _runtime_trace_defaults()
+    path = _runtime_trace_path(sim_code)
+    if not path.exists():
+        return payload
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return payload
+    if not isinstance(raw, dict):
+        return payload
+    for key in payload.keys():
+        if key in raw:
+            payload[key] = raw[key]
+    for int_key in (
+        "requested_seed",
+        "resolved_seed",
+        "backend_movement_max_step",
+        "frontend_environment_max_step",
+        "curr_step",
+        "last_update_step",
+        "last_process_step",
+        "lag",
+    ):
+        payload[int_key] = _coerce_optional_int(payload.get(int_key))
+    return payload
+
+
+def _write_runtime_trace(sim_code: str, trace_payload: dict) -> dict:
+    path = _runtime_trace_path(sim_code)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(trace_payload, f, indent=2)
+    return trace_payload
+
+
+def _remove_step_snapshot_files(directory: Path) -> int:
+    removed = 0
+    if not directory.exists():
+        return removed
+    for file_path in directory.glob("*.json"):
+        try:
+            int(file_path.stem)
+        except (TypeError, ValueError):
+            continue
+        try:
+            file_path.unlink(missing_ok=True)
+            removed += 1
+        except Exception:
+            continue
+    return removed
+
+
+def _read_meta_seed(sim_code: str):
+    meta_path = Path(_storage_path(sim_code, "reverie", "meta.json"))
+    if not meta_path.exists():
+        return None
+    try:
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return _coerce_seed_or_none(payload.get("seed"))
+
+
+def _derive_blocked_reason(runtime_sync: dict, backend_health: dict) -> str:
+    if backend_health.get("stalled"):
+        return "backend_not_consuming_commands"
+    movement_step = _coerce_optional_int(runtime_sync.get("latest_movement_step"))
+    environment_step = _coerce_optional_int(runtime_sync.get("latest_environment_step"))
+    curr_step = _coerce_optional_int(runtime_sync.get("curr_step_pointer"))
+    if movement_step is None:
+        return "movement_step_missing"
+    if environment_step is None:
+        return "environment_step_missing"
+    if environment_step > movement_step:
+        return "environment_ahead_of_movement"
+    if movement_step > (environment_step + 1):
+        return "environment_writeback_lag"
+    if curr_step is not None and curr_step > (movement_step + 1):
+        return "curr_step_ahead_of_movement"
+    if not bool(runtime_sync.get("in_sync")):
+        return "runtime_not_in_sync"
+    return "none"
+
+
+def _sync_runtime_trace(
+    sim_code: str,
+    *,
+    run_id=_UNSET,
+    started_at=_UNSET,
+    requested_seed=_UNSET,
+    resolved_seed=_UNSET,
+    last_update_step=_UNSET,
+    last_process_step=_UNSET,
+    blocked_reason=_UNSET,
+) -> dict:
+    status_step = _read_status_step(sim_code)
+    runtime_sync = _build_runtime_sync(sim_code, status_step=status_step)
+    backend_health = _runtime_backend_health(sim_code)
+    trace = _read_runtime_trace(sim_code)
+    if not trace.get("run_id"):
+        trace["run_id"] = str(uuid.uuid4())
+    if not trace.get("started_at"):
+        trace["started_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    if run_id is not _UNSET:
+        trace["run_id"] = run_id
+    if started_at is not _UNSET:
+        trace["started_at"] = started_at
+    if requested_seed is not _UNSET:
+        trace["requested_seed"] = _coerce_optional_int(requested_seed)
+    if resolved_seed is not _UNSET:
+        trace["resolved_seed"] = _coerce_optional_int(resolved_seed)
+    if last_update_step is not _UNSET:
+        trace["last_update_step"] = _coerce_optional_int(last_update_step)
+    if last_process_step is not _UNSET:
+        trace["last_process_step"] = _coerce_optional_int(last_process_step)
+
+    trace["backend_movement_max_step"] = _coerce_optional_int(runtime_sync.get("latest_movement_step"))
+    trace["frontend_environment_max_step"] = _coerce_optional_int(runtime_sync.get("latest_environment_step"))
+    trace["curr_step"] = _coerce_optional_int(runtime_sync.get("curr_step_pointer"))
+
+    if trace["backend_movement_max_step"] is None or trace["frontend_environment_max_step"] is None:
+        trace["lag"] = None
+    else:
+        trace["lag"] = max(0, trace["backend_movement_max_step"] - trace["frontend_environment_max_step"])
+
+    if blocked_reason is _UNSET:
+        trace["blocked_reason"] = _derive_blocked_reason(runtime_sync, backend_health)
+    else:
+        trace["blocked_reason"] = str(blocked_reason)
+
+    _write_runtime_trace(sim_code, trace)
+    return trace
+
+
+def _reset_runtime_state_for_new_run(sim_code: str, *, requested_seed=None) -> dict:
+    sim_code = _normalize_sim_code(sim_code) or sim_code
+    movement_dir = Path(_storage_path(sim_code, "movement"))
+    environment_dir = Path(_storage_path(sim_code, "environment"))
+    movement_dir.mkdir(parents=True, exist_ok=True)
+    environment_dir.mkdir(parents=True, exist_ok=True)
+
+    _remove_step_snapshot_files(movement_dir)
+    _remove_step_snapshot_files(environment_dir)
+    for stale_file in (
+        Path(_storage_path(sim_code, "sim_status.json")),
+        Path(_storage_path(sim_code, "runtime_trace.json")),
+        Path(_temp_path("curr_step.json")),
+    ):
+        try:
+            stale_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    run_id = str(uuid.uuid4())
+    started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    trace = _sync_runtime_trace(
+        sim_code,
+        run_id=run_id,
+        started_at=started_at,
+        requested_seed=requested_seed,
+        resolved_seed=None,
+        last_update_step=None,
+        last_process_step=None,
+        blocked_reason="runtime_reset",
+    )
+    return trace
 
 def landing(request): 
     context = {}
@@ -905,6 +1114,7 @@ def process_environment(request):
         return JsonResponse(payload, status=500)
 
     payload = {"ok": True, "step": step, "sim_code": sim_code}
+    _sync_runtime_trace(sim_code, last_process_step=step)
     _append_bridge_request_log(request, status=200, ok=True, sim_code=sim_code, step=step)
     return JsonResponse(payload)
 
@@ -930,6 +1140,8 @@ def update_environment(request):
         with open(_storage_path(sim_code, "movement", f"{step}.json")) as json_file: 
             response_data = json.load(json_file)
             response_data["<step>"] = step
+    if response_data.get("<step>") == step:
+        _sync_runtime_trace(str(sim_code).strip(), last_update_step=step)
     _append_bridge_request_log(
         request,
         status=200,
@@ -1086,6 +1298,7 @@ def start_backend(request, origin, target):
         running_pids = _list_running_reverie_processes(backend_dir)
         backend_health = _runtime_backend_health(target, backend_dir=backend_dir)
         if running_pids and not backend_health.get("stalled"):
+            _sync_runtime_trace(target)
             return JsonResponse({
                 "ok": running_pids[0],
                 "backend_dir": str(backend_dir),
@@ -1099,6 +1312,11 @@ def start_backend(request, origin, target):
             _cleanup_stale_runtime_state()
         if check_if_file_exists(_temp_path("curr_step.json")):
             os.remove(_temp_path("curr_step.json"))
+        trace_snapshot = _read_runtime_trace(target)
+        if not trace_snapshot.get("run_id"):
+            _reset_runtime_state_for_new_run(target, requested_seed=_read_meta_seed(origin))
+        else:
+            _sync_runtime_trace(target)
 
 
         arguments = ["--frontend_ui", "yes", "--origin", origin, "--target", target]
@@ -1190,6 +1408,7 @@ def start_backend(request, origin, target):
                 break
             time.sleep(0.5)
         post_health = _runtime_backend_health(target, backend_dir=backend_dir)
+        _sync_runtime_trace(target)
         if log_handle:
             try:
                 log_handle.flush()
@@ -1278,6 +1497,7 @@ def live_dashboard_api(request):
         status_step = None
     data["runtime_sync"] = _build_runtime_sync(sim_code, status_step=status_step)
     data["backend_health"] = _runtime_backend_health(sim_code)
+    data["runtime_trace"] = _sync_runtime_trace(sim_code)
 
     # Optionally include completed patient stage times
     if request.GET.get("include_stages") == "true":
@@ -1435,10 +1655,11 @@ def save_simulation_settings(request):
         for key in allowed_keys:
             if key in payload:
                 meta[key] = payload[key]
-        meta["seed"] = _coerce_seed_value(meta.get("seed"), default=1337)
+        meta["seed"] = _coerce_seed_or_none(meta.get("seed"))
 
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=2)
+        _reset_runtime_state_for_new_run("curr_sim", requested_seed=meta.get("seed"))
 
         return JsonResponse({"ok": True})
 

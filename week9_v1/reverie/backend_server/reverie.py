@@ -195,6 +195,85 @@ def _build_safe_movement_path(collision_maze, start_tile, end_tile):
     return []
   return [[tile_x, tile_y] for tile_x, tile_y in normalized]
 
+
+def _coerce_step_movement_path(collision_maze, start_tile, end_tile):
+  start = _normalize_tile_coordinate(start_tile)
+  end = _normalize_tile_coordinate(end_tile)
+  if start is None or end is None:
+    return []
+  if start == end:
+    return [[start[0], start[1]]]
+
+  movement_path = _build_safe_movement_path(collision_maze, start, end)
+  if movement_path and len(movement_path) >= 2:
+    return movement_path
+  return [[start[0], start[1]], [end[0], end[1]]]
+
+
+def _read_runtime_trace(trace_path):
+  defaults = {
+    "run_id": None,
+    "started_at": None,
+    "requested_seed": None,
+    "resolved_seed": None,
+    "backend_movement_max_step": None,
+    "frontend_environment_max_step": None,
+    "curr_step": None,
+    "last_update_step": None,
+    "last_process_step": None,
+    "lag": None,
+    "blocked_reason": "initializing",
+  }
+  if not os.path.exists(trace_path):
+    return defaults
+  try:
+    payload = json.load(open(trace_path))
+  except Exception:
+    return defaults
+  if isinstance(payload, dict):
+    defaults.update(payload)
+  return defaults
+
+
+def _write_runtime_trace(trace_path, **updates):
+  payload = _read_runtime_trace(trace_path)
+  if not payload.get("run_id"):
+    payload["run_id"] = str(uuid.uuid4())
+  if not payload.get("started_at"):
+    payload["started_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+  payload.update(updates)
+  backend_step = payload.get("backend_movement_max_step")
+  frontend_step = payload.get("frontend_environment_max_step")
+  try:
+    if backend_step is None or frontend_step is None:
+      payload["lag"] = None
+    else:
+      payload["lag"] = max(0, int(backend_step) - int(frontend_step))
+  except (TypeError, ValueError):
+    payload["lag"] = None
+  _atomic_write_json(trace_path, payload)
+  return payload
+
+
+def _clear_step_snapshots(sim_folder):
+  for folder_name in ("movement", "environment"):
+    folder = Path(sim_folder) / folder_name
+    folder.mkdir(parents=True, exist_ok=True)
+    for file_path in folder.glob("*.json"):
+      try:
+        int(file_path.stem)
+      except (TypeError, ValueError):
+        continue
+      try:
+        file_path.unlink(missing_ok=True)
+      except Exception:
+        continue
+  for file_name in ("sim_status.json", "runtime_trace.json"):
+    try:
+      (Path(sim_folder) / file_name).unlink(missing_ok=True)
+    except Exception:
+      continue
+
 ##############################################################################
 #                                  REVERIE                                   #
 ##############################################################################
@@ -226,6 +305,7 @@ class ReverieServer:
     # reverie/meta/json's fork variable. 
     sim_folder = f"{fs_storage}/{self.sim_code}"
     copyanything(fork_folder, sim_folder)
+    _clear_step_snapshots(sim_folder)
 
     self.meta_path = f"{sim_folder}/reverie/meta.json"
     with open(self.meta_path) as json_file:  
@@ -251,6 +331,14 @@ class ReverieServer:
       self.seed = random.randint(0, 1000000)
 
     _seed_runtime_rngs(self.seed)
+    reverie_meta["seed"] = self.seed
+    _atomic_write_json(self.meta_path, reverie_meta)
+    self.runtime_trace_path = f"{sim_folder}/runtime_trace.json"
+    _write_runtime_trace(
+      self.runtime_trace_path,
+      resolved_seed=self.seed,
+      blocked_reason="backend_booted",
+    )
 
     # LOADING REVERIE'S GLOBAL VARIABLES
     # The start datetime of the Reverie: 
@@ -2282,7 +2370,7 @@ class ReverieServer:
                 current_tile=list(tile_entry) if tile_entry else None,
                 target_tile=list(next_tile) if next_tile else None,
               )
-              movement_path = _build_safe_movement_path(
+              movement_path = _coerce_step_movement_path(
                 self.maze.collision_maze,
                 tile_entry,
                 next_tile,
@@ -2394,6 +2482,12 @@ class ReverieServer:
                 latest_movement_step=self.step,
               )
               _atomic_write_json(curr_move_file, movements)
+              _write_runtime_trace(
+                self.runtime_trace_path,
+                backend_movement_max_step=self.step,
+                curr_step=self.step,
+                blocked_reason="movement_available",
+              )
 
             # After this cycle, the world takes one step forward, and the
             # current time moves by <sec_per_step> amount.

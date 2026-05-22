@@ -35,7 +35,7 @@
   "testing_time": 20,
   "add_patient_threshold": 0,
   "doctor_starting_amount": 3,
-  "triage_starting_amount": 3,
+  "triage_starting_amount": 1,
   "bedside_starting_amount": 3,
   "patient_walkout_probability": 0,
   "patient_walkout_check_minutes": 20,

@@ -2563,6 +2563,9 @@ class ReverieServer:
           elif cmd_lower.startswith("run"):
               int_count = int(sim_command.split()[-1])
               self.start_server(int_count)
+              # Persist meta/persona registry so the frontend can visualize newly
+              # spawned staff (e.g., Doctor 2/3) after a run command.
+              self.save()
               elapsed = time.perf_counter() - command_wall_start
               ret_str = (
                 f"Ran {int_count} steps.\n"

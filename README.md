@@ -1,40 +1,4 @@
-# Week 9: ED Simulation (Auto + User + HIS)
-
-This directory contains a runnable ED simulation system with:
-- **Auto mode**: multi-patient simulation driven by `reverie/backend_server/`.
-- **User mode**: interactive "one patient under user control" flow driven by `app_core/app/`.
-- **HIS (SQLite dev backend)**: both modes persist structured encounter records.
-- **Django + Phaser UI**: the primary UI entrypoint under `environment/frontend_server/`.
-
-## What Was Improved This Week
-
-### Frontend / UI Runtime Sync
-- Stabilized **UI runtime sync** so the Phaser map playback does not stall when pointer/status frames drift.
-- Added **backend health checks** and **stale runtime self-heal** logic during `/start_backend/...` startup and polling.
-- Improved robustness around temp-storage command consumption and runtime pointers (`curr_step.json`, `sim_status.json`, movement/environment frames).
-
-### Backend: Auto/User Fusion + Deterministic Control
-- Enabled **auto runtime hosting user interaction**:
-  - Start backend with `EDSIM_MODE=auto` and still open the UI with `?ui_mode=user`.
-  - A user-controlled patient can be injected into the auto world via the existing command bridge.
-- Preserved ownership boundaries:
-  - Auto state machine remains rule-driven.
-  - User mode enables **doctor LLM + doctor-only RAG** only for the user patient during the doctor encounter.
-
-### HIS: "Write Everything" Baseline
-- Both auto-mode and user-mode flows write to HIS via `sqlite_dev` storage.
-- HIS internal IDs are contract-aligned:
-  - `patient_id`: `P-xxxxxxxx` (lowercase hex)
-  - `encounter_id`: `E-YYYYMMDDHHmmss-xxxx`
-- Public-facing legacy IDs (e.g. `enc-...`, `Patient 1`) are retained in `encounters.metadata.public_encounter_id` (mapping only).
-
-### Security / Secrets Hygiene
-- Secrets are no longer stored in repo JSON configs.
-- API keys are expected to be provided via environment variables loaded from `.env`.
-
----
-
-## Week12 中文说明（用于汇报/答辩）
+## Week12 说明
 
 ### （1）上周内容回顾（Week10）
 
@@ -61,7 +25,7 @@ This directory contains a runnable ED simulation system with:
    - 代码库不再存储密钥。  
    - API Key 统一走 `.env` 注入。
 
-### （2）本周完成任务（Week10.5/11）
+### （2）本周完成任务（Week12）
 
 本周重点是“结构化可追踪”与“前后端闭环证据化”。
 

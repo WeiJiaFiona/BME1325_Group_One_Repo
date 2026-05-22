@@ -9,13 +9,13 @@ from app_core.his.config import EVENT_ENVELOPE_FIELDS, FROZEN_ROUTE_NAMES, utc_n
 PATIENT_ID_PATTERN = r"^P-[0-9a-f]{8}$"
 ENCOUNTER_ID_PATTERN = r"^E-\d{14}-[0-9a-f]{4}$"
 FROZEN_CTAS_LEVELS = ("L1", "L2", "L3", "L4", "L5")
-FROZEN_ZONE_VALUES = ("red", "orange", "yellow", "green", "blue")
+FROZEN_ZONE_VALUES = ("red", "yellow", "green")
 CTAS_TO_ZONE_HINTS = {
     "L1": "red",
-    "L2": "orange",
+    "L2": "red",
     "L3": "yellow",
     "L4": "green",
-    "L5": "blue",
+    "L5": "green",
 }
 
 
@@ -46,7 +46,7 @@ def get_contract_field_mappings() -> tuple[ContractFieldMapping, ...]:
         ContractFieldMapping(
             source_field="CurrentEncounterSummary.current_zone or ED triage derivation",
             contract_field="zone",
-            notes="Normalize to red/orange/yellow/green/blue for cross-team and contract use.",
+            notes="Normalize to red/yellow/green for cross-team and contract use.",
         ),
         ContractFieldMapping(
             source_field="Normalized HIS write event",
@@ -57,10 +57,7 @@ def get_contract_field_mappings() -> tuple[ContractFieldMapping, ...]:
 
 
 def normalize_contract_identifiers(*, patient_id: str, encounter_id: str, ctas_level: str, zone: str) -> dict[str, str]:
-    if not re.fullmatch(PATIENT_ID_PATTERN, patient_id):
-        raise ValueError(f"patient_id must match {PATIENT_ID_PATTERN}")
-    if not re.fullmatch(ENCOUNTER_ID_PATTERN, encounter_id):
-        raise ValueError(f"encounter_id must match {ENCOUNTER_ID_PATTERN}")
+    normalized_ids = validate_contract_ids(patient_id=patient_id, encounter_id=encounter_id)
     normalized_ctas = str(ctas_level).strip().upper()
     normalized_zone = str(zone).strip().lower()
     if normalized_ctas not in FROZEN_CTAS_LEVELS:
@@ -68,11 +65,18 @@ def normalize_contract_identifiers(*, patient_id: str, encounter_id: str, ctas_l
     if normalized_zone not in FROZEN_ZONE_VALUES:
         raise ValueError(f"zone must be one of {FROZEN_ZONE_VALUES}")
     return {
-        "patient_id": patient_id,
-        "encounter_id": encounter_id,
+        **normalized_ids,
         "ctas_level": normalized_ctas,
         "zone": normalized_zone,
     }
+
+
+def validate_contract_ids(*, patient_id: str, encounter_id: str) -> dict[str, str]:
+    if not re.fullmatch(PATIENT_ID_PATTERN, patient_id):
+        raise ValueError(f"patient_id must match {PATIENT_ID_PATTERN}")
+    if not re.fullmatch(ENCOUNTER_ID_PATTERN, encounter_id):
+        raise ValueError(f"encounter_id must match {ENCOUNTER_ID_PATTERN}")
+    return {"patient_id": patient_id, "encounter_id": encounter_id}
 
 
 def get_contract_route_names() -> tuple[str, ...]:
@@ -97,12 +101,7 @@ def build_event_envelope(
         raise ValueError("event_type is required")
     if not str(source).strip():
         raise ValueError("source is required")
-    normalized = normalize_contract_identifiers(
-        patient_id=patient_id,
-        encounter_id=encounter_id,
-        ctas_level="L3",
-        zone="yellow",
-    )
+    normalized = validate_contract_ids(patient_id=patient_id, encounter_id=encounter_id)
     envelope = {
         "event_id": event_id or f"evt-{uuid.uuid4().hex[:12]}",
         "event_type": str(event_type).strip(),

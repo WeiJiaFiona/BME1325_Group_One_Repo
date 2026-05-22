@@ -190,6 +190,21 @@ def _auto_persona_name(session: Dict[str, Any]) -> str:
     return persona_name
 
 
+def _derive_internal_injuries_zone_from_ctas(ctas: int) -> str:
+    """
+    Map contract CTAS (1-5) to the EDSim internal room vocabulary.
+
+    Note: Contract `zone` is a 3-color derived field (red/yellow/green). Internal room names
+    (trauma/major/minor) should not leak into contract-facing fields.
+    """
+    level = int(ctas or 3)
+    if level <= 1:
+        return "trauma room"
+    if level == 2:
+        return "major injuries zone"
+    return "minor injuries zone"
+
+
 def _sync_user_patient_to_auto(session: Dict[str, Any], *, enqueue_doctor: bool, user_phase: str) -> None:
     auto_snapshot = _load_auto_runtime_snapshot()
     if not auto_snapshot.get("available"):
@@ -203,7 +218,7 @@ def _sync_user_patient_to_auto(session: Dict[str, Any], *, enqueue_doctor: bool,
         "user_patient_id": session.get("patient_id"),
         "user_encounter_id": session.get("encounter_id"),
         "chief_complaint": chief_complaint,
-        "injuries_zone": triage.get("zone") or derive_zone_from_ctas(f"L{ctas}"),
+        "injuries_zone": _derive_internal_injuries_zone_from_ctas(ctas),
         "ctas": ctas,
         "user_phase": user_phase,
         "enqueue_doctor": enqueue_doctor,
@@ -303,7 +318,7 @@ def _sync_encounter_to_his(encounter: Dict[str, Any]) -> None:
     his_patient_id, his_encounter_id = _ensure_his_identifiers(encounter)
     triage = dict(encounter.get("triage", {}) or {})
     ctas_level = f"L{triage.get('ctas_compat', 3)}"
-    zone = triage.get("zone") or derive_zone_from_ctas(ctas_level)
+    zone = derive_zone_from_ctas(ctas_level)
 
     register_patient(
         PatientRecord(

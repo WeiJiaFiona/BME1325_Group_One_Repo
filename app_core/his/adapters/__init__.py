@@ -6,6 +6,7 @@ from .contract_adapter import (
     get_contract_route_names,
     get_event_envelope_fields,
     normalize_contract_identifiers,
+    validate_contract_ids,
 )
 from .memory_adapter import (
     MemoryToHisMappingExpectation,
@@ -37,6 +38,7 @@ __all__ = [
     "map_handoff_snapshot_to_his_writes",
     "map_memory_item_to_his_writes",
     "normalize_contract_identifiers",
+    "validate_contract_ids",
     "persist_current_summary",
     "persist_handoff_snapshot",
     "persist_memory_item",

@@ -17,7 +17,7 @@ def build_contract_alignment_smoke_result() -> dict[str, object]:
         patient_id="P-1a2b3c4d",
         encounter_id="E-20260515153045-1a2b",
         ctas_level="L2",
-        zone="orange",
+        zone="red",
     )
     envelope = build_event_envelope(
         event_type="handoff_requested",

@@ -1,3 +1,18 @@
+import os
+import sys
+from pathlib import Path
+
+_CURRENT_FILE = Path(__file__).resolve()
+_BACKEND_SERVER_DIR = _CURRENT_FILE.parent
+_REVERIE_DIR = _BACKEND_SERVER_DIR.parent
+_REPO_ROOT = _REVERIE_DIR.parent
+
+for _path_entry in (str(_BACKEND_SERVER_DIR), str(_REVERIE_DIR), str(_REPO_ROOT)):
+    while _path_entry in sys.path:
+        sys.path.remove(_path_entry)
+for _path_entry in (str(_REPO_ROOT), str(_REVERIE_DIR), str(_BACKEND_SERVER_DIR)):
+    sys.path.insert(0, _path_entry)
+
 import json
 import copy
 import numpy
@@ -5,7 +20,6 @@ import datetime
 import pickle
 import time
 import math
-import os
 import shutil
 import traceback
 import argparse
@@ -24,7 +38,6 @@ from persona.persona_types.doctor import *
 from auto_memory_hooks import AutoMemoryHookManager
 import pathlib
 import uuid
-from pathlib import Path
 
 
 from wait_time_utils import (
@@ -36,6 +49,21 @@ from week7_logic import effective_arrival_rate
 
 
 current_file = os.path.abspath(__file__)
+fs_storage = utils.fs_storage
+fs_temp_storage = utils.fs_temp_storage
+REVERIE_CRASH_LOG = _REPO_ROOT / "environment" / "frontend_server" / "logs" / "crash.log"
+
+
+def _append_runtime_crash_log(message: str, *, payload=None) -> None:
+    REVERIE_CRASH_LOG.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "message": message,
+    }
+    if payload is not None:
+        entry["payload"] = payload
+    with open(REVERIE_CRASH_LOG, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def _seed_runtime_rngs(seed: int) -> None:
@@ -167,6 +195,204 @@ def _build_safe_movement_path(collision_maze, start_tile, end_tile):
     return []
   return [[tile_x, tile_y] for tile_x, tile_y in normalized]
 
+
+def _coerce_step_movement_path(collision_maze, start_tile, end_tile):
+  start = _normalize_tile_coordinate(start_tile)
+  end = _normalize_tile_coordinate(end_tile)
+  if start is None or end is None:
+    return []
+  if start == end:
+    return [[start[0], start[1]]]
+
+  movement_path = _build_safe_movement_path(collision_maze, start, end)
+  if movement_path and len(movement_path) >= 2:
+    return movement_path
+  return [[start[0], start[1]], [end[0], end[1]]]
+
+
+def _read_runtime_trace(trace_path):
+  defaults = {
+    "run_id": None,
+    "started_at": None,
+    "requested_seed": None,
+    "resolved_seed": None,
+    "backend_movement_max_step": None,
+    "frontend_environment_max_step": None,
+    "curr_step": None,
+    "last_update_step": None,
+    "last_process_step": None,
+    "lag": None,
+    "blocked_reason": "initializing",
+  }
+  if not os.path.exists(trace_path):
+    return defaults
+  try:
+    payload = json.load(open(trace_path))
+  except Exception:
+    return defaults
+  if isinstance(payload, dict):
+    defaults.update(payload)
+  return defaults
+
+
+def _write_runtime_trace(trace_path, **updates):
+  payload = _read_runtime_trace(trace_path)
+  if not payload.get("run_id"):
+    payload["run_id"] = str(uuid.uuid4())
+  if not payload.get("started_at"):
+    payload["started_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+  payload.update(updates)
+  backend_step = payload.get("backend_movement_max_step")
+  frontend_step = payload.get("frontend_environment_max_step")
+  try:
+    if backend_step is None or frontend_step is None:
+      payload["lag"] = None
+    else:
+      payload["lag"] = max(0, int(backend_step) - int(frontend_step))
+  except (TypeError, ValueError):
+    payload["lag"] = None
+  _atomic_write_json(trace_path, payload)
+  return payload
+
+
+def _clear_step_snapshots(sim_folder):
+  for folder_name in ("movement", "environment"):
+    folder = Path(sim_folder) / folder_name
+    folder.mkdir(parents=True, exist_ok=True)
+    for file_path in folder.glob("*.json"):
+      try:
+        int(file_path.stem)
+      except (TypeError, ValueError):
+        continue
+      try:
+        file_path.unlink(missing_ok=True)
+      except Exception:
+        continue
+  for file_name in ("sim_status.json", "runtime_trace.json", "dialogue_trace.jsonl"):
+    try:
+      (Path(sim_folder) / file_name).unlink(missing_ok=True)
+    except Exception:
+      continue
+
+
+_ROLE_SCHEMA_MAP = {
+  "Doctor": {"role_key": "doctor", "badge": "DR"},
+  "TriageNurse": {"role_key": "triage_nurse", "badge": "TN"},
+  "BedsideNurse": {"role_key": "bed_nurse", "badge": "BN"},
+  "Patient": {"role_key": "patient", "badge": "PT"},
+}
+
+_ALLOWED_DIALOGUE_SOURCE_TYPES = {
+  "none",
+  "agent_chat_v2_iterative",
+  "local_fail_safe",
+  "rule_based",
+}
+
+_ALLOWED_LLM_MODES = {"local_only", "hybrid", "remote_only"}
+
+
+def _resolve_role_schema(persona_role):
+  payload = _ROLE_SCHEMA_MAP.get(str(persona_role or "").strip())
+  if payload:
+    return payload
+  return {"role_key": "other", "badge": "OT"}
+
+
+def _resolve_llm_mode_from_env():
+  raw_mode = str(os.environ.get("EDSIM_LLM_MODE", "remote_only")).strip().lower()
+  if raw_mode in _ALLOWED_LLM_MODES:
+    return raw_mode
+  if raw_mode == "remote":
+    return "remote_only"
+  return "remote_only"
+
+
+def _dialogue_template_paths(persona_role):
+  role_name = str(persona_role or "Unknown").strip() or "Unknown"
+  prompt_path = f"persona/prompt_template/ED/v3_ChatGPT/{role_name}/iterative_convo_v1.txt"
+  summary_path = f"persona/prompt_template/ED/v3_ChatGPT/{role_name}/summarize_conversation_v1.txt"
+  return prompt_path, summary_path
+
+
+def _build_dialogue_provenance_payload(persona, chat_payload):
+  runtime_meta = getattr(persona, "runtime_dialogue_provenance", None)
+  prompt_template_path, summary_template_path = _dialogue_template_paths(getattr(persona, "role", None))
+  chat_present = isinstance(chat_payload, list) and len(chat_payload) > 0
+  default_llm_mode = _resolve_llm_mode_from_env()
+
+  payload = {
+    "chat_present": bool(chat_present),
+    "source_type": "rule_based" if chat_present else "none",
+    "llm_mode": default_llm_mode,
+    "generator": "agent_chat_v2",
+    "prompt_template_path": prompt_template_path,
+    "summary_template_path": summary_template_path,
+    "fallback_used": False,
+    "fallback_reason": None,
+    "local_library_paths": [prompt_template_path, summary_template_path],
+  }
+
+  if isinstance(runtime_meta, dict):
+    source_type = str(runtime_meta.get("source_type") or "").strip()
+    if source_type in _ALLOWED_DIALOGUE_SOURCE_TYPES:
+      payload["source_type"] = source_type
+    llm_mode = str(runtime_meta.get("llm_mode") or "").strip().lower()
+    if llm_mode in _ALLOWED_LLM_MODES:
+      payload["llm_mode"] = llm_mode
+    generator = str(runtime_meta.get("generator") or "").strip()
+    if generator:
+      payload["generator"] = generator
+    prompt_path = str(runtime_meta.get("prompt_template_path") or "").strip()
+    if prompt_path:
+      payload["prompt_template_path"] = prompt_path
+    summary_path = str(runtime_meta.get("summary_template_path") or "").strip()
+    if summary_path:
+      payload["summary_template_path"] = summary_path
+    payload["fallback_used"] = bool(runtime_meta.get("fallback_used", False))
+    fallback_reason = runtime_meta.get("fallback_reason")
+    payload["fallback_reason"] = str(fallback_reason) if fallback_reason not in (None, "") else None
+    libraries = runtime_meta.get("local_library_paths")
+    if isinstance(libraries, list):
+      cleaned = [str(path).strip() for path in libraries if str(path).strip()]
+      if cleaned:
+        payload["local_library_paths"] = cleaned
+
+  if not payload["chat_present"]:
+    payload["source_type"] = "none"
+    payload["fallback_used"] = False
+    payload["fallback_reason"] = None
+
+  # Do not leak stale chat metadata into future non-chat ticks.
+  setattr(persona, "runtime_dialogue_provenance", None)
+  return payload
+
+
+def _build_movement_persona_payload(persona, movement_tile, movement_path, pronunciatio, description, chat_payload):
+  role_schema = _resolve_role_schema(getattr(persona, "role", None))
+  dialogue_provenance = _build_dialogue_provenance_payload(persona, chat_payload)
+  return {
+    "schema_version": "persona_movement_v2",
+    "role": str(getattr(persona, "role", "Unknown")),
+    "role_key": role_schema["role_key"],
+    "badge": role_schema["badge"],
+    "role_source": "backend_explicit_role_map_v1",
+    "movement": movement_tile,
+    "movement_path": movement_path,
+    "path_length": max(0, len(movement_path) - 1),
+    "pronunciatio": pronunciatio,
+    "description": description,
+    "chat": chat_payload,
+    "dialogue_provenance": dialogue_provenance,
+  }
+
+
+def _append_dialogue_trace_record(trace_path, record):
+  trace_file = Path(trace_path)
+  trace_file.parent.mkdir(parents=True, exist_ok=True)
+  with open(trace_file, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
 ##############################################################################
 #                                  REVERIE                                   #
 ##############################################################################
@@ -177,6 +403,7 @@ class ReverieServer:
                sim_code):
     self.driver = None
     self.sim_code = sim_code
+    self._last_runtime_context = {}
     print ("(reverie): Temp storage: ", fs_temp_storage)
     utils.log_runtime_event(
       "backend boot",
@@ -197,6 +424,7 @@ class ReverieServer:
     # reverie/meta/json's fork variable. 
     sim_folder = f"{fs_storage}/{self.sim_code}"
     copyanything(fork_folder, sim_folder)
+    _clear_step_snapshots(sim_folder)
 
     self.meta_path = f"{sim_folder}/reverie/meta.json"
     with open(self.meta_path) as json_file:  
@@ -222,6 +450,16 @@ class ReverieServer:
       self.seed = random.randint(0, 1000000)
 
     _seed_runtime_rngs(self.seed)
+    reverie_meta["seed"] = self.seed
+    _atomic_write_json(self.meta_path, reverie_meta)
+    self.runtime_trace_path = f"{sim_folder}/runtime_trace.json"
+    trace_payload = _write_runtime_trace(
+      self.runtime_trace_path,
+      resolved_seed=self.seed,
+      blocked_reason="backend_booted",
+    )
+    self.run_id = trace_payload.get("run_id")
+    self.dialogue_trace_path = f"{sim_folder}/dialogue_trace.jsonl"
 
     # LOADING REVERIE'S GLOBAL VARIABLES
     # The start datetime of the Reverie: 
@@ -549,11 +787,6 @@ class ReverieServer:
     # <server_sleep> denotes the amount of time that our while loop rests each
     # cycle; this is to not kill our machine. 
     self.server_sleep = 0.01
-    self.user_controlled_patients = {
-      persona.name: persona.name
-      for persona in self.personas.values()
-      if getattr(getattr(persona, "scratch", None), "user_controlled", False)
-    }
 
 
     # SIGNALING THE FRONTEND SERVER: 
@@ -591,6 +824,19 @@ class ReverieServer:
       step=self.step,
       sim_time=self.curr_time,
     )
+    try:
+      self._write_sim_status(sim_folder)
+    except Exception as exc:
+      _append_runtime_crash_log(
+        "bootstrap sim_status write failed",
+        payload={
+          "sim_code": self.sim_code,
+          "step": self.step,
+          "error": str(exc),
+          "traceback": traceback.format_exc(),
+        },
+      )
+      raise
 
   def _set_tiles_per_step_for_runtime(self, *, frontend_control: bool) -> None:
     """Choose movement granularity for the current runtime mode."""
@@ -628,6 +874,30 @@ class ReverieServer:
       step=self.step if step is None else step,
       command=command,
       extra=extra,
+    )
+
+  def _record_runtime_context(self, **kwargs):
+    clean = {key: value for key, value in kwargs.items() if value is not None}
+    if clean:
+      self._last_runtime_context.update(clean)
+
+  def _append_crash_report(self, exc, *, command=None):
+    self._record_runtime_context(
+      sim_code=self.sim_code,
+      step=self.step,
+      curr_time=self.curr_time.strftime("%B %d, %Y, %H:%M:%S"),
+      command=command,
+    )
+    _append_runtime_crash_log(
+      "reverie runtime crash",
+      payload={
+        "sim_code": self.sim_code,
+        "step": self.step,
+        "command": command,
+        "context": dict(self._last_runtime_context),
+        "error": str(exc),
+        "traceback": traceback.format_exc(),
+      },
     )
 
   def _attach_auto_memory_hook_manager(self, persona):
@@ -1449,8 +1719,16 @@ class ReverieServer:
       env_dir = f"{sim_folder}/environment"
       env_data = {}
       for p_name, tile in self.personas_tile.items():
-        env_data[p_name] = {"maze": "Emergency Department",
-                            "x": tile[0], "y": tile[1]}
+        persona = self.personas.get(p_name)
+        env_data[p_name] = {
+            "maze": "Emergency Department",
+            "x": tile[0],
+            "y": tile[1],
+            "name": p_name,
+            "role": getattr(persona, "role", None),
+            "persona_role": getattr(persona, "role", None),
+            "act": getattr(getattr(persona, "scratch", None), "act_description", None),
+        }
       _atomic_write_json(f"{env_dir}/{self.step}.json", env_data)
 
     # Save the personas.
@@ -1918,100 +2196,6 @@ class ReverieServer:
 
     print(f"(reverie): Preloaded {count} real patients into the waiting room")
 
-  def _remove_patient_from_auto_queues(self, patient_name):
-    self.maze.triage_queue[:] = [name for name in self.maze.triage_queue if name != patient_name]
-    self.maze.patients_waiting_for_doctor[:] = [
-      entry for entry in self.maze.patients_waiting_for_doctor
-      if len(entry) < 2 or entry[1] != patient_name
-    ]
-    for queue_name in ("bedside_nurse_waiting", "pager"):
-      queue = self.maze.injuries_zones.get(queue_name, [])
-      queue[:] = [entry for entry in queue if len(entry) < 2 or entry[1] != patient_name]
-
-  def _waiting_room_spawn(self):
-    chairs = list(self.maze.address_tiles.get("ed map:emergency department:waiting room:waiting room chair", []))
-    if chairs:
-      return random.choice(chairs)
-    exits = list(self.maze.address_tiles.get("<spawn_loc>exit", []))
-    if exits:
-      return random.choice(exits)
-    return [0, 0]
-
-  def _zone_bed_spawn(self, zone_name):
-    zone_key = str(zone_name or "").strip()
-    bed_tiles = list(self.maze.address_tiles.get(f"ed map:emergency department:{zone_key}:bed", []))
-    if bed_tiles:
-      return random.choice(bed_tiles)
-    return self._waiting_room_spawn()
-
-  def _next_step_for_user_phase(self, phase, zone_name):
-    phase_key = str(phase or "").strip().upper()
-    zone_key = str(zone_name or "minor injuries zone").strip()
-    if phase_key in {"DOCTOR_CALLED", "IN_CONSULTATION", "BED_NURSE_FLOW"}:
-      return f"ed map:emergency department:{zone_key}:bed"
-    if phase_key == "DONE":
-      return "ed map:emergency department:exit"
-    return "ed map:emergency department:waiting room:waiting room chair"
-
-  def upsert_user_controlled_patient(self, payload):
-    if not isinstance(payload, dict):
-      raise ValueError("payload must be a dict")
-
-    patient_name = str(payload.get("persona_name") or "").strip()
-    if not patient_name:
-      raise ValueError("persona_name is required")
-    user_patient_id = str(payload.get("user_patient_id") or patient_name).strip()
-    user_encounter_id = str(payload.get("user_encounter_id") or "").strip() or None
-    chief_complaint = str(payload.get("chief_complaint") or "User-controlled patient").strip()
-    phase = str(payload.get("user_phase") or "WAITING_CALL").strip().upper()
-    ctas = int(payload.get("ctas") or 3)
-    zone_name = str(payload.get("injuries_zone") or "minor injuries zone").strip()
-    enqueue_doctor = bool(payload.get("enqueue_doctor", False))
-    doctor_priority = float(payload.get("doctor_priority") or (ctas * max(1, Patient.priority_factor)))
-
-    curr_persona = self.personas.get(patient_name)
-    if curr_persona is None:
-      spawn_tile = self._waiting_room_spawn() if not enqueue_doctor else self._zone_bed_spawn(zone_name)
-      curr_persona, pos = self.add_persona_to_sim(
-        "Patient",
-        agent_desc=f"Experiencing {chief_complaint} | Innate: Cooperative, Anxious",
-        persona_loc=spawn_tile,
-        persona_name=patient_name,
-      )
-      self.add_persona_to_step(curr_persona, pos)
-    else:
-      pos = list(self.personas_tile.get(patient_name, self._waiting_room_spawn()))
-
-    curr_persona.scratch.user_controlled = True
-    curr_persona.scratch.user_patient_id = user_patient_id
-    curr_persona.scratch.user_encounter_id = user_encounter_id
-    curr_persona.scratch.user_phase = phase
-    curr_persona.scratch.exempt_from_data_collection = False
-    curr_persona.scratch.ICD = curr_persona.scratch.ICD or "USER-MODE"
-    curr_persona.scratch.CTAS = ctas
-    curr_persona.scratch.injuries_zone = zone_name
-    curr_persona.scratch.state = "WAITING_FOR_DOCTOR" if phase not in {"DONE"} else "WAITING_FOR_EXIT"
-    curr_persona.scratch.next_room = zone_name
-    curr_persona.scratch.next_step = self._next_step_for_user_phase(phase, zone_name)
-    curr_persona.scratch.act_path_set = False
-    curr_persona.scratch.chat = None
-
-    self._remove_patient_from_auto_queues(patient_name)
-    if enqueue_doctor:
-      bisect.insort_right(self.maze.patients_waiting_for_doctor, [doctor_priority, patient_name])
-
-    self.user_controlled_patients[user_patient_id] = patient_name
-    self.personas_tile[patient_name] = tuple(pos)
-    self._write_sim_status(f"{fs_storage}/{self.sim_code}")
-    return {
-      "persona_name": patient_name,
-      "user_patient_id": user_patient_id,
-      "user_encounter_id": user_encounter_id,
-      "phase": phase,
-      "enqueue_doctor": enqueue_doctor,
-      "doctor_priority": doctor_priority,
-    }
-
   def start_server(self, int_counter):
     """
     The main backend server of Reverie. 
@@ -2130,7 +2314,15 @@ class ReverieServer:
         # instead of waiting for frontend file I/O.
         new_env = {}
         for p_name, tile in self.personas_tile.items():
-          new_env[p_name] = {"x": tile[0], "y": tile[1]}
+          persona = self.personas.get(p_name)
+          new_env[p_name] = {
+              "x": tile[0],
+              "y": tile[1],
+              "name": p_name,
+              "role": getattr(persona, "role", None),
+              "persona_role": getattr(persona, "role", None),
+              "act": getattr(getattr(persona, "scratch", None), "act_description", None),
+          }
         env_retrieved = True
       else:
         # Normal mode: poll for the environment file written by the frontend.
@@ -2139,271 +2331,339 @@ class ReverieServer:
           env_retrieved, new_env = self._try_load_json_file(curr_env_file)
 
       if env_retrieved: 
-          step_wall_start = time.perf_counter()
-          self._runtime_log(
-            "step cycle start",
-            step=self.step,
-            extra={"sim_time": self.curr_time.strftime("%B %d, %Y, %H:%M:%S")},
-          )
-          # This is where we go through <game_obj_cleanup> to clean up all 
-          # object actions that were used in this cylce. 
-          for key, val in game_obj_cleanup.items(): 
-            # We turn all object actions to their blank form (with None). 
-            self.maze.turn_event_from_tile_idle(key, val)
-          # Then we initialize game_obj_cleanup for this cycle. 
-          game_obj_cleanup = dict()
+            self._record_runtime_context(
+              phase="step_cycle_start",
+              requested_steps_remaining=int_counter,
+              step=self.step,
+              sim_time=self.curr_time.strftime("%B %d, %Y, %H:%M:%S"),
+            )
+            step_wall_start = time.perf_counter()
+            self._runtime_log(
+              "step cycle start",
+              step=self.step,
+              extra={"sim_time": self.curr_time.strftime("%B %d, %Y, %H:%M:%S")},
+            )
+            # This is where we go through <game_obj_cleanup> to clean up all 
+            # object actions that were used in this cylce. 
+            for key, val in game_obj_cleanup.items(): 
+              # We turn all object actions to their blank form (with None). 
+              self.maze.turn_event_from_tile_idle(key, val)
+            # Then we initialize game_obj_cleanup for this cycle. 
+            game_obj_cleanup = dict()
 
-          # Track the patients that are in the exit area and leaving
-          leaving_patient = []
+            # Track the patients that are in the exit area and leaving
+            leaving_patient = []
 
-          # We first move our personas in the backend environment to match 
-          # the frontend environment. 
-          for persona_name, persona in list(self.personas.items()): 
-            # <curr_tile> is the tile that the persona was at previously. 
-            curr_tile = self.personas_tile.get(persona_name)
-            if curr_tile is None:
-              print(f"(reverie): Warning - missing tile entry for {persona_name}, skipping movement update")
-              continue
-            if not self.maze.is_tile_in_bounds(curr_tile):
-              print(f"(reverie): Warning - current tile out of bounds for {persona_name}: {curr_tile}, skipping movement update")
-              continue
-            print(persona_name)
+            # We first move our personas in the backend environment to match 
+            # the frontend environment. 
+            for persona_name, persona in list(self.personas.items()): 
+              self._record_runtime_context(
+                phase="sync_persona_from_environment",
+                persona_name=persona_name,
+                persona_role=getattr(persona, "role", None),
+              )
+              # <curr_tile> is the tile that the persona was at previously. 
+              curr_tile = self.personas_tile.get(persona_name)
+              if curr_tile is None:
+                print(f"(reverie): Warning - missing tile entry for {persona_name}, skipping movement update")
+                continue
+              if not self.maze.is_tile_in_bounds(curr_tile):
+                print(f"(reverie): Warning - current tile out of bounds for {persona_name}: {curr_tile}, skipping movement update")
+                continue
+              print(persona_name)
 
-            # Check if patient is in the exit are and actually leaving the ED 
-            if(self.maze.tiles[curr_tile[1]][curr_tile[0]]['arena'] == "exit" and 
-               persona.scratch.next_step == "ed map:emergency department:exit"):
+              # Check if patient is in the exit are and actually leaving the ED 
+              if(self.maze.tiles[curr_tile[1]][curr_tile[0]]['arena'] == "exit" and 
+                 persona.scratch.next_step == "ed map:emergency department:exit"):
+                
+                leaving_patient.append(persona)
+                # Free up any bed space the patient was occupying
+                if hasattr(persona, "_release_bed"):
+                  persona._release_bed(self.maze)
+                # Remove them from the tile events
+                self.maze.remove_subject_events_from_tile(persona.name, curr_tile)
+                continue
+
+              # <new_tile> is the tile that the persona will move to right now,
+              # during this cycle. 
+              env_entry = new_env.get(persona_name)
+              if env_entry is None:
+                print(f"(reverie): Warning - missing environment snapshot for {persona_name}, skipping movement update")
+                continue
+              new_tile = (env_entry["x"], 
+                          env_entry["y"])
+              if not self.maze.is_tile_in_bounds(new_tile):
+                print(f"(reverie): Warning - frontend tile out of bounds for {persona_name}: {new_tile}; keeping {curr_tile}")
+                new_tile = curr_tile
               
-              leaving_patient.append(persona)
-              # Free up any bed space the patient was occupying
-              if hasattr(persona, "_release_bed"):
-                persona._release_bed(self.maze)
-              # Remove them from the tile events
+              # We actually move the persona on the backend tile map here. 
+              self.personas_tile[persona_name] = new_tile
               self.maze.remove_subject_events_from_tile(persona.name, curr_tile)
-              continue
-
-            # <new_tile> is the tile that the persona will move to right now,
-            # during this cycle. 
-            env_entry = new_env.get(persona_name)
-            if env_entry is None:
-              print(f"(reverie): Warning - missing environment snapshot for {persona_name}, skipping movement update")
-              continue
-            new_tile = (env_entry["x"], 
-                        env_entry["y"])
-            if not self.maze.is_tile_in_bounds(new_tile):
-              print(f"(reverie): Warning - frontend tile out of bounds for {persona_name}: {new_tile}; keeping {curr_tile}")
-              new_tile = curr_tile
-            
-            # We actually move the persona on the backend tile map here. 
-            self.personas_tile[persona_name] = new_tile
-            self.maze.remove_subject_events_from_tile(persona.name, curr_tile)
-            self.maze.add_event_from_tile(persona.scratch
-                                         .get_curr_event_and_desc(), new_tile)
-
-            # Now, the persona will travel to get to their destination. *Once*
-            # the persona gets there, we activate the object action.
-            if not persona.scratch.planned_path: 
-              # We add that new object action event to the backend tile map. 
-              # At its creation, it is stored in the persona's backend. 
-              game_obj_cleanup[persona.scratch
-                               .get_curr_obj_event_and_desc()] = new_tile
               self.maze.add_event_from_tile(persona.scratch
-                                     .get_curr_obj_event_and_desc(), new_tile)
-              # We also need to remove the temporary blank action for the 
-              # object that is current_state taking the action. 
-              blank = (persona.scratch.get_curr_obj_event_and_desc()[0], 
-                       None, None, None)
-              self.maze.remove_event_from_tile(blank, new_tile)
+                                           .get_curr_event_and_desc(), new_tile)
 
-          # Check for any patients who are leaving as assigned in the previous for loop
-          for curr_persona in leaving_patient:
-            if getattr(curr_persona, "role", None) == "Patient" and getattr(self, "auto_memory_hooks", None):
-              self.auto_memory_hooks.record_encounter_closed(
-                curr_persona,
-                step=self.step,
-                sim_time=self.curr_time,
-                close_reason="leave_ed",
+              # Now, the persona will travel to get to their destination. *Once*
+              # the persona gets there, we activate the object action.
+              if not persona.scratch.planned_path: 
+                # We add that new object action event to the backend tile map. 
+                # At its creation, it is stored in the persona's backend. 
+                game_obj_cleanup[persona.scratch
+                                 .get_curr_obj_event_and_desc()] = new_tile
+                self.maze.add_event_from_tile(persona.scratch
+                                       .get_curr_obj_event_and_desc(), new_tile)
+                # We also need to remove the temporary blank action for the 
+                # object that is current_state taking the action. 
+                blank = (persona.scratch.get_curr_obj_event_and_desc()[0], 
+                         None, None, None)
+                self.maze.remove_event_from_tile(blank, new_tile)
+
+            # Check for any patients who are leaving as assigned in the previous for loop
+            for curr_persona in leaving_patient:
+              if getattr(curr_persona, "role", None) == "Patient" and getattr(self, "auto_memory_hooks", None):
+                self.auto_memory_hooks.record_encounter_closed(
+                  curr_persona,
+                  step=self.step,
+                  sim_time=self.curr_time,
+                  close_reason="leave_ed",
+                )
+              curr_persona.leave_ed(self.maze, self.personas, sim_folder, self.data_collection)
+              # Remove persona from runtime trackers
+              self.personas.pop(curr_persona.name, None)
+              self.personas_tile.pop(curr_persona.name, None)
+
+
+
+
+            # Then we need to actually have each of the personas perceive and
+            # move. The movement for each of the personas comes in the form of
+            # x y coordinates where the persona will move towards. e.g., (50, 34)
+            # This is where the core brains of the personas are invoked. 
+            movements = {"persona": dict(), 
+                         "meta": dict()}
+            for persona_name, persona in list(self.personas.items()): 
+              # <next_tile> is a x,y coordinate. e.g., (58, 9)
+              # <pronunciatio> is an emoji. e.g., "\ud83d\udca4"
+              # <description> is a string description of the movement. e.g., 
+              #   writing her next novel (editing her novel) 
+              #   @ double studio:double studio:common room:sofa
+              tile_entry = self.personas_tile.get(persona_name)
+              if tile_entry is None:
+                print(f"(reverie): Warning - missing tile entry for {persona_name}, skipping movement frame")
+                continue
+              role_bucket = self.data_collection.setdefault(persona.role, {})
+              persona_bucket = role_bucket.get(persona_name)
+              if persona_bucket is None:
+                persona_bucket = persona.data_collection_dict()
+                role_bucket[persona_name] = persona_bucket
+              persona.runtime_step = self.step
+              pre_state = None
+              pre_area = None
+              if persona.role == "Patient":
+                pre_state = persona.scratch.state
+                pre_area = self.maze.tiles[tile_entry[1]][tile_entry[0]]['arena']
+              next_tile, pronunciatio, description = persona.move(
+                self.maze, self.personas, tile_entry, 
+                self.curr_time, persona_bucket)
+              if persona.role == "Patient" and self.travel_minutes_per_tile > 0:
+                tiles_moved = 0
+                if next_tile and (next_tile[0] != tile_entry[0] or next_tile[1] != tile_entry[1]):
+                  tiles_moved = abs(next_tile[0] - tile_entry[0]) + abs(next_tile[1] - tile_entry[1])
+                  if tiles_moved == 0:
+                    tiles_moved = 1
+                if tiles_moved > 0:
+                  travel_minutes = tiles_moved * self.travel_minutes_per_tile
+                  persona_bucket.setdefault("tiles_traveled", 0)
+                  persona_bucket["tiles_traveled"] += tiles_moved
+                  persona_bucket.setdefault("travel_time_minutes", 0.0)
+                  persona_bucket["travel_time_minutes"] += travel_minutes
+                  travel_state = persona_bucket.setdefault("travel_time_state", {})
+                  if pre_state:
+                    travel_state[pre_state] = travel_state.get(pre_state, 0) + travel_minutes
+                  travel_area = persona_bucket.setdefault("travel_time_area", {})
+                  if pre_area:
+                    travel_area[pre_area] = travel_area.get(pre_area, 0) + travel_minutes
+              chat_payload = persona.scratch.chat
+              self._record_runtime_context(
+                phase="movement_payload_build",
+                persona_name=persona_name,
+                persona_role=getattr(persona, "role", None),
+                current_tile=list(tile_entry) if tile_entry else None,
+                target_tile=list(next_tile) if next_tile else None,
               )
-            curr_persona.leave_ed(self.maze, self.personas, sim_folder, self.data_collection)
-            # Remove persona from runtime trackers
-            self.personas.pop(curr_persona.name, None)
-            self.personas_tile.pop(curr_persona.name, None)
-
-
-
-
-          # Then we need to actually have each of the personas perceive and
-          # move. The movement for each of the personas comes in the form of
-          # x y coordinates where the persona will move towards. e.g., (50, 34)
-          # This is where the core brains of the personas are invoked. 
-          movements = {"persona": dict(), 
-                       "meta": dict()}
-          for persona_name, persona in list(self.personas.items()): 
-            # <next_tile> is a x,y coordinate. e.g., (58, 9)
-            # <pronunciatio> is an emoji. e.g., "\ud83d\udca4"
-            # <description> is a string description of the movement. e.g., 
-            #   writing her next novel (editing her novel) 
-            #   @ double studio:double studio:common room:sofa
-            tile_entry = self.personas_tile.get(persona_name)
-            if tile_entry is None:
-              print(f"(reverie): Warning - missing tile entry for {persona_name}, skipping movement frame")
-              continue
-            role_bucket = self.data_collection.setdefault(persona.role, {})
-            persona_bucket = role_bucket.get(persona_name)
-            if persona_bucket is None:
-              persona_bucket = persona.data_collection_dict()
-              role_bucket[persona_name] = persona_bucket
-            persona.runtime_step = self.step
-            pre_state = None
-            pre_area = None
-            if persona.role == "Patient":
-              pre_state = persona.scratch.state
-              pre_area = self.maze.tiles[tile_entry[1]][tile_entry[0]]['arena']
-            next_tile, pronunciatio, description = persona.move(
-              self.maze, self.personas, tile_entry, 
-              self.curr_time, persona_bucket)
-            if persona.role == "Patient" and self.travel_minutes_per_tile > 0:
-              tiles_moved = 0
-              if next_tile and (next_tile[0] != tile_entry[0] or next_tile[1] != tile_entry[1]):
-                tiles_moved = abs(next_tile[0] - tile_entry[0]) + abs(next_tile[1] - tile_entry[1])
-                if tiles_moved == 0:
-                  tiles_moved = 1
-              if tiles_moved > 0:
-                travel_minutes = tiles_moved * self.travel_minutes_per_tile
-                persona_bucket.setdefault("tiles_traveled", 0)
-                persona_bucket["tiles_traveled"] += tiles_moved
-                persona_bucket.setdefault("travel_time_minutes", 0.0)
-                persona_bucket["travel_time_minutes"] += travel_minutes
-                travel_state = persona_bucket.setdefault("travel_time_state", {})
-                if pre_state:
-                  travel_state[pre_state] = travel_state.get(pre_state, 0) + travel_minutes
-                travel_area = persona_bucket.setdefault("travel_time_area", {})
-                if pre_area:
-                  travel_area[pre_area] = travel_area.get(pre_area, 0) + travel_minutes
-            movements["persona"][persona_name] = {}
-            movements["persona"][persona_name]["movement"] = next_tile
-            movement_path = _build_safe_movement_path(
-              self.maze.collision_maze,
-              tile_entry,
-              next_tile,
-            )
-            movements["persona"][persona_name]["movement_path"] = movement_path
-            movements["persona"][persona_name]["path_length"] = max(0, len(movement_path) - 1)
-            movements["persona"][persona_name]["pronunciatio"] = pronunciatio
-            movements["persona"][persona_name]["description"] = description
-            movements["persona"][persona_name]["chat"] = (persona
-                                                          .scratch.chat)
-
-          # Fix orphaned patients, age global queue, boost overdue patients,
-          # triage timeouts, and process scheduled preloaded patient departures
-          self._rescue_orphaned_patients()
-          self._age_global_doctor_queue()
-          self._boost_overdue_patients()
-          self._check_triage_timeouts()
-          self._process_preloaded_departures()
-          self._write_sim_status(sim_folder)
-
-          # Add new Patient based on threshold when it's over or equal to one
-          if(self.add_patient_threshold >= 1):
-            # Select symptom based on probabilities 
-            symptoms = str(numpy.random.choice(self.symptoms["Symptoms"], p=self.symptoms["normalized_fraction"]))
-            symptoms_index = self.symptoms["Symptoms"].index(symptoms)
-            innates = ["Impatient, Friendly", "Unstable, Friendly"]
-            choosen_innate = random.choice(innates)
-            new_patient, curr_tile = self.add_persona_to_sim("Patient",f"Experiencing {symptoms} | Innate: {choosen_innate}", 
-                                                             persona_loc=random.choice(list(self.maze.address_tiles["<spawn_loc>exit"])))
-
-            # Add to this steps movement dict so that frontend can see it
-            movements["persona"][new_patient.name] = {}
-            movements["persona"][new_patient.name]["movement"] = curr_tile
-            movements["persona"][new_patient.name]["movement_path"] = [[curr_tile[0], curr_tile[1]]]
-            movements["persona"][new_patient.name]["path_length"] = 0
-            movements["persona"][new_patient.name]["pronunciatio"] = ""
-            movements["persona"][new_patient.name]["description"] = ""
-            movements["persona"][new_patient.name]["chat"] = (new_patient.scratch.chat)
-
-            new_patient.scratch.ICD = self.symptoms["ICD-10-CA"][symptoms_index]
-            new_patient.scratch.CTAS = int(self.symptoms["CTAS"][symptoms_index])
-            new_patient.scratch.injuries_zone = self.symptoms["Zone"][symptoms_index]
-
-            # Add patient to triage queue
-            self.maze.triage_queue.append(new_patient.name)
-            self._runtime_log(
-              "patient arrival generated",
-              step=self.step,
-              extra={
-                "patient": new_patient.name,
-                "arrival_profile_mode": self.arrival_profile_mode,
-                "hour": self.curr_time.hour,
-                "ctas": new_patient.scratch.CTAS,
-                "zone": new_patient.scratch.injuries_zone,
-              },
-            )
-            if getattr(self, "auto_memory_hooks", None):
-              self.auto_memory_hooks.record_encounter_started(
-                new_patient,
-                step=self.step,
-                sim_time=self.curr_time,
-                source="runtime_arrival",
+              movement_path = _coerce_step_movement_path(
+                self.maze.collision_maze,
+                tile_entry,
+                next_tile,
+              )
+              movements["persona"][persona_name] = _build_movement_persona_payload(
+                persona=persona,
+                movement_tile=next_tile,
+                movement_path=movement_path,
+                pronunciatio=pronunciatio,
+                description=description,
+                chat_payload=chat_payload,
               )
 
-            # Reset counter 
-            self.add_patient_threshold -= 1
-          else:
-            # First calculate the (patient added)/(steps in a hour)
-            # Then added that to the threshold to add in patients throughout the hour
-            # External rate to affect how many Patient coming in. Change in meta file.
-            arrival_rate = effective_arrival_rate(
-              self.patient_rate,
-              self.arrival_profile_mode,
-              self.curr_time.hour,
-            )
+            # Fix orphaned patients, age global queue, boost overdue patients,
+            # triage timeouts, and process scheduled preloaded patient departures
+            self._rescue_orphaned_patients()
+            self._age_global_doctor_queue()
+            self._boost_overdue_patients()
+            self._check_triage_timeouts()
+            self._process_preloaded_departures()
+            self._write_sim_status(sim_folder)
+
+            # Add new Patient based on threshold when it's over or equal to one
+            if(self.add_patient_threshold >= 1):
+              # Select symptom based on probabilities 
+              symptoms = str(numpy.random.choice(self.symptoms["Symptoms"], p=self.symptoms["normalized_fraction"]))
+              symptoms_index = self.symptoms["Symptoms"].index(symptoms)
+              innates = ["Impatient, Friendly", "Unstable, Friendly"]
+              choosen_innate = random.choice(innates)
+              new_patient, curr_tile = self.add_persona_to_sim("Patient",f"Experiencing {symptoms} | Innate: {choosen_innate}", 
+                                                               persona_loc=random.choice(list(self.maze.address_tiles["<spawn_loc>exit"])))
+
+              # Add to this steps movement dict so that frontend can see it
+              movements["persona"][new_patient.name] = _build_movement_persona_payload(
+                persona=new_patient,
+                movement_tile=curr_tile,
+                movement_path=[[curr_tile[0], curr_tile[1]]],
+                pronunciatio="",
+                description="",
+                chat_payload=new_patient.scratch.chat,
+              )
+
+              new_patient.scratch.ICD = self.symptoms["ICD-10-CA"][symptoms_index]
+              new_patient.scratch.CTAS = int(self.symptoms["CTAS"][symptoms_index])
+              new_patient.scratch.injuries_zone = self.symptoms["Zone"][symptoms_index]
+
+              # Add patient to triage queue
+              self.maze.triage_queue.append(new_patient.name)
+              self._runtime_log(
+                "patient arrival generated",
+                step=self.step,
+                extra={
+                  "patient": new_patient.name,
+                  "arrival_profile_mode": self.arrival_profile_mode,
+                  "hour": self.curr_time.hour,
+                  "ctas": new_patient.scratch.CTAS,
+                  "zone": new_patient.scratch.injuries_zone,
+                },
+              )
+              if getattr(self, "auto_memory_hooks", None):
+                self.auto_memory_hooks.record_encounter_started(
+                  new_patient,
+                  step=self.step,
+                  sim_time=self.curr_time,
+                  source="runtime_arrival",
+                )
+
+              # Reset counter 
+              self.add_patient_threshold -= 1
+            else:
+              # First calculate the (patient added)/(steps in a hour)
+              # Then added that to the threshold to add in patients throughout the hour
+              # External rate to affect how many Patient coming in. Change in meta file.
+              arrival_rate = effective_arrival_rate(
+                self.patient_rate,
+                self.arrival_profile_mode,
+                self.curr_time.hour,
+              )
+              self._runtime_log(
+                "arrival profile applied",
+                step=self.step,
+                extra={
+                  "arrival_profile_mode": self.arrival_profile_mode,
+                  "hour": self.curr_time.hour,
+                  "patient_rate_modifier": self.patient_rate,
+                  "effective_arrival_rate": arrival_rate,
+                  "threshold_before": self.add_patient_threshold,
+                },
+              )
+              self.add_patient_threshold += (
+                float(self.ed_visits["num_of_patients"][self.curr_time.hour]) / (3600.0 / self.sec_per_step)
+              ) * arrival_rate
+
+            # Include the meta information about the current stage in the 
+            # movements dictionary. 
+            movements["meta"]["curr_time"] = (self.curr_time 
+                                               .strftime("%B %d, %Y, %H:%M:%S"))
+
+            # In headless mode, update personas_tile directly from movements
+            # so the next iteration uses the new positions.
+            if self.headless:
+              for p_name, p_data in movements["persona"].items():
+                mv = p_data["movement"]
+                self.personas_tile[p_name] = (mv[0], mv[1])
+
+            # Write movement file for replay support (skipped in pure logic runs).
+            if self.write_movement:
+              curr_move_file = f"{sim_folder}/movement/{self.step}.json"
+              self._record_runtime_context(
+                phase="publish_movement",
+                movement_file=curr_move_file,
+                latest_movement_step=self.step,
+              )
+              _atomic_write_json(curr_move_file, movements)
+              trace_payload = _write_runtime_trace(
+                self.runtime_trace_path,
+                backend_movement_max_step=self.step,
+                curr_step=self.step,
+                blocked_reason="movement_available",
+              )
+              if trace_payload.get("run_id"):
+                self.run_id = trace_payload.get("run_id")
+              for persona_name, movement_info in movements["persona"].items():
+                provenance = movement_info.get("dialogue_provenance")
+                if not isinstance(provenance, dict) or not provenance.get("chat_present"):
+                  continue
+                chat_payload = movement_info.get("chat")
+                participants = []
+                if isinstance(chat_payload, list):
+                  for turn in chat_payload:
+                    if not isinstance(turn, list) or not turn:
+                      continue
+                    speaker = str(turn[0]).strip()
+                    if speaker and speaker not in participants:
+                      participants.append(speaker)
+                record = {
+                  "run_id": self.run_id,
+                  "step": self.step,
+                  "persona": persona_name,
+                  "participants": participants,
+                  "chat": chat_payload,
+                  "source_type": provenance.get("source_type"),
+                  "llm_mode": provenance.get("llm_mode"),
+                  "generator": provenance.get("generator"),
+                  "prompt_template_path": provenance.get("prompt_template_path"),
+                  "summary_template_path": provenance.get("summary_template_path"),
+                  "fallback_used": bool(provenance.get("fallback_used", False)),
+                  "fallback_reason": provenance.get("fallback_reason"),
+                  "local_library_paths": provenance.get("local_library_paths") if isinstance(provenance.get("local_library_paths"), list) else [],
+                  "linked_movement_file": f"movement/{self.step}.json",
+                }
+                _append_dialogue_trace_record(self.dialogue_trace_path, record)
+
+            # After this cycle, the world takes one step forward, and the
+            # current time moves by <sec_per_step> amount.
+            self.step += 1
+            self.curr_time += datetime.timedelta(seconds=self.sec_per_step)
             self._runtime_log(
-              "arrival profile applied",
+              "step cycle done",
               step=self.step,
-              extra={
-                "arrival_profile_mode": self.arrival_profile_mode,
-                "hour": self.curr_time.hour,
-                "patient_rate_modifier": self.patient_rate,
-                "effective_arrival_rate": arrival_rate,
-                "threshold_before": self.add_patient_threshold,
-              },
+              elapsed_seconds=time.perf_counter() - step_wall_start,
+              extra={"next_sim_time": self.curr_time.strftime("%B %d, %Y, %H:%M:%S")},
             )
-            self.add_patient_threshold += (
-              float(self.ed_visits["num_of_patients"][self.curr_time.hour]) / (3600.0 / self.sec_per_step)
-            ) * arrival_rate
 
-          # Include the meta information about the current stage in the 
-          # movements dictionary. 
-          movements["meta"]["curr_time"] = (self.curr_time 
-                                             .strftime("%B %d, %Y, %H:%M:%S"))
-
-          # In headless mode, update personas_tile directly from movements
-          # so the next iteration uses the new positions.
-          if self.headless:
-            for p_name, p_data in movements["persona"].items():
-              mv = p_data["movement"]
-              self.personas_tile[p_name] = (mv[0], mv[1])
-
-          # Write movement file for replay support (skipped in pure logic runs).
-          if self.write_movement:
-            curr_move_file = f"{sim_folder}/movement/{self.step}.json"
-            _atomic_write_json(curr_move_file, movements)
-
-          # After this cycle, the world takes one step forward, and the
-          # current time moves by <sec_per_step> amount.
-          self.step += 1
-          self.curr_time += datetime.timedelta(seconds=self.sec_per_step)
-          self._runtime_log(
-            "step cycle done",
-            step=self.step,
-            elapsed_seconds=time.perf_counter() - step_wall_start,
-            extra={"next_sim_time": self.curr_time.strftime("%B %d, %Y, %H:%M:%S")},
-          )
-
-          int_counter -= 1
+            int_counter -= 1
 
       curr_step = dict()
       curr_step["step"] = self.step
+      self._record_runtime_context(
+        phase="publish_curr_step",
+        curr_step=self.step,
+        curr_step_path=f"{fs_temp_storage}/curr_step.json",
+      )
       _atomic_write_json(f"{fs_temp_storage}/curr_step.json", curr_step)
       self._runtime_log(
         "curr_step published",
@@ -2480,7 +2740,6 @@ class ReverieServer:
 
     while True:
         sim_command = None
-        cmd_args = {}
         cmd_id = None
         cmd_path = None
         finished = False
@@ -2502,7 +2761,6 @@ class ReverieServer:
                 with open(cmd_path, encoding="utf-8-sig") as f:
                     payload = json.load(f)
                 sim_command = payload.get("command", "").strip()
-                cmd_args = payload.get("args") or {}
                 cmd_id = payload.get("id", cmd_path.stem)
             except (json.JSONDecodeError, PermissionError) as e:
                 print("(reverie): Command file not ready yet:", e)
@@ -2575,10 +2833,6 @@ class ReverieServer:
                 elapsed_seconds=elapsed,
                 extra={"completed_steps": int_count, "curr_step": self.step},
               )
-
-          elif cmd_lower == "inject_user_patient":
-              result = self.upsert_user_controlled_patient(cmd_args if isinstance(cmd_args, dict) else {})
-              ret_str = json.dumps({"ok": True, "result": result})
 
           elif cmd_lower.startswith("print persona schedule"):
               name = " ".join(sim_command.split()[-2:])
@@ -2662,6 +2916,7 @@ class ReverieServer:
 
         except Exception as e:
             ret_str = f"(reverie): Error: {str(e)}\n"
+            self._append_crash_report(e, command=sim_command)
             self._runtime_log(
               "command failed",
               command=sim_command,
@@ -2931,7 +3186,7 @@ class ReverieServer:
 
   # To create patient during simulation
   # Adds and initiate persona in simulation
-  def add_persona_to_sim(self, persona_role, agent_desc = "", persona_loc = None, persona_name = None):
+  def add_persona_to_sim(self, persona_role, agent_desc = "", persona_loc = None):
     self.num_roles[persona_role] += 1
     sim_folder = f"{fs_storage}/{self.sim_code}"
 
@@ -2947,7 +3202,6 @@ class ReverieServer:
         self.maze,
         persona_loc=persona_loc,
         seed=self.seed,
-        explicit_name=persona_name,
     )
 
     _assign_wait_targets(curr_persona, self.ctas_wait_config, self.curr_time, self.surge_multiplier)

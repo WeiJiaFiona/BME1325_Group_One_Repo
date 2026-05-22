@@ -83,6 +83,25 @@
 		return ROLE_STYLE[roleKeyForName(personaName)] || ROLE_STYLE.other;
 	}
 
+	function normalizeRoleKey(roleKey) {
+		const normalized = String(roleKey || "").trim().toLowerCase();
+		return ROLE_STYLE[normalized] ? normalized : "";
+	}
+
+	function resolveRolePresentation(personaName, movementInfo) {
+		const fallbackRoleKey = roleKeyForName(personaName);
+		const payloadRoleKey = movementInfo ? normalizeRoleKey(movementInfo["role_key"]) : "";
+		const roleKey = payloadRoleKey || fallbackRoleKey;
+		const roleStyle = ROLE_STYLE[roleKey] || ROLE_STYLE.other;
+		const payloadBadge = movementInfo && typeof movementInfo["badge"] === "string"
+			? movementInfo["badge"].trim().toUpperCase()
+			: "";
+		return {
+			roleKey: roleKey,
+			badge: payloadBadge || roleStyle.tag,
+		};
+	}
+
 	function avatarKeyForRole(roleKey) {
 		return ROLE_FIGURE_KEY[roleKey] || ROLE_FIGURE_KEY.other;
 	}
@@ -365,10 +384,16 @@
 		let data = {"step": targetStep, "sim_code": sim_code, "environment": {}};
 		for (let i = 0; i < Object.keys(personas).length; i++) {
 			let personaName = Object.keys(personas)[i];
+			const resolvedRoleKey = (personas[personaName] && personas[personaName].data && personas[personaName].data.get("roleKey"))
+				|| roleKeyForName(personaName);
 			data["environment"][personaName] = {
 				"maze": curr_maze,
 				"x": snapBodyToGrid(personas[personaName].body.x),
 				"y": snapBodyToGrid(personas[personaName].body.y),
+				"name": personaName,
+				"role": resolvedRoleKey,
+				"persona_role": resolvedRoleKey,
+				"act": movementPathQueue[personaName] && movementPathQueue[personaName].length ? "moving" : "idle",
 			};
 		}
 		environment_request = new XMLHttpRequest();
@@ -513,6 +538,38 @@
 		registerPersonaDebug(personaName, roleKey, avatarKey, spriteKey, role.tag);
 	}
 
+	function applyPersonaRolePresentation(personaName, movementInfo) {
+		const roleInfo = resolveRolePresentation(personaName, movementInfo);
+		const avatarKey = avatarKeyForRole(roleInfo.roleKey);
+		const sprite = personas[personaName];
+		if (sprite && sprite.data) {
+			sprite.data.set("roleKey", roleInfo.roleKey);
+			sprite.data.set("badgeTag", roleInfo.badge);
+			sprite.data.set("figureKey", avatarKey);
+			sprite.data.set("avatarKey", avatarKey);
+		}
+		if (nameBadges[personaName]) {
+			nameBadges[personaName].setText(roleInfo.badge);
+		}
+		if (figureBadges[personaName]) {
+			figureBadges[personaName].setTexture(avatarKey);
+		}
+		const panel = document.getElementById("on_screen_det_content-" + personaName.replace(/ /g, "_"));
+		if (panel) {
+			panel.setAttribute("data-role-key", roleInfo.roleKey);
+			panel.setAttribute("data-avatar-key", avatarKey);
+			panel.setAttribute("data-figure-key", avatarKey);
+		}
+		registerPersonaDebug(
+			personaName,
+			roleInfo.roleKey,
+			avatarKey,
+			(sprite && sprite.data && sprite.data.get("spriteKey")) || spriteKeyForPersona(personaName),
+			roleInfo.badge
+		);
+		return roleInfo;
+	}
+
 	function destroyPersonaDecorations(personaName) {
 		if (nameBadges[personaName]) {
 			nameBadges[personaName].destroy();
@@ -526,7 +583,9 @@
 		delete window.__EDSIM_DEBUG__.movement[personaName];
 	}
 
-	function createPersonaVisual(scene, personaName, tile) {
+	function createPersonaVisual(scene, personaName, tile, movementInfo) {
+		const roleInfo = resolveRolePresentation(personaName, movementInfo);
+		const roleStyle = ROLE_STYLE[roleInfo.roleKey] || ROLE_STYLE.other;
 		const spriteKey = spriteKeyForPersona(personaName);
 		const start_pos = [tile[0] * tile_width + tile_width / 2, tile[1] * tile_width + tile_width];
 		let new_sprite = scene.physics.add
@@ -540,19 +599,20 @@
 		pronunciatios[personaName] = scene.add.text(
 			new_sprite.body.x - 6,
 			new_sprite.body.y - 42 - 32,
-			roleForName(personaName).tag + ": ...",
+			roleInfo.badge + ": ...",
 			{
 				font: "28px monospace",
 				fill: "#000000",
 				padding: { x: 8, y: 8},
-				backgroundColor: role.badge,
+				backgroundColor: roleStyle.badge,
 				border: "solid",
 				borderRadius: "10px"
 			}
 		).setDepth(3);
 		attachPersonaDecorations(scene, personaName, new_sprite);
 		window.__EDSIM_DEBUG__.spawnOrder.push(personaName);
-		addNewPersonaSection(personaName, personaName.replaceAll(" ", "_"));
+		addNewPersonaSection(personaName, personaName.replaceAll(" ", "_"), null, null, null, movementInfo);
+		applyPersonaRolePresentation(personaName, movementInfo);
 	}
 
 	function removePersonaVisual(personaName) {
@@ -579,6 +639,11 @@
 		};
 	}
 
+	function formatTileText(tile) {
+		if (!Array.isArray(tile) || tile.length < 2) return "--";
+		return `(${tile[0]}, ${tile[1]})`;
+	}
+
 	function updatePersonaPanels() {
 		for (let i = 0; i < Object.keys(personas).length; i++) {
 			let personaName = Object.keys(personas)[i];
@@ -586,17 +651,30 @@
 			let movementInfo = execute_movement["persona"][personaName];
 			let personaStatus = parsePersonaStatus(movementInfo);
 			let personaNameOs = personaName.replace(/ /g, "_");
-			let chatContent = "";
-			if (movementInfo["chat"] != null) {
-				for (let j = 0; j < movementInfo["chat"].length; j++) {
-					chatContent += movementInfo["chat"][j][0] + ": " + movementInfo["chat"][j][1] + "<br>";
-				}
-			} else {
-				chatContent = "<em>None at the moment</em>";
-			}
+			const roleInfo = applyPersonaRolePresentation(personaName, movementInfo);
+			const movementTarget = Array.isArray(movementInfo["movement"])
+				? [parseInt(movementInfo["movement"][0]), parseInt(movementInfo["movement"][1])]
+				: null;
+			const movementPath = Array.isArray(movementInfo["movement_path"])
+				? movementInfo["movement_path"]
+				: (Array.isArray(movementInfo["path_tiles"]) ? movementInfo["path_tiles"] : []);
+			const movementPathLength = movementPath.length;
+			const hasChat = Array.isArray(movementInfo["chat"]) && movementInfo["chat"].length > 0;
+			const sourceType = movementInfo["dialogue_provenance"] && movementInfo["dialogue_provenance"]["source_type"]
+				? String(movementInfo["dialogue_provenance"]["source_type"])
+				: "none";
+			const sprite = personas[personaName];
+			const envTile = sprite ? getCurrentTileForSprite(sprite) : null;
+
+			document.getElementById("panel_step__" + personaNameOs).textContent = String(playback_step);
+			document.getElementById("panel_role__" + personaNameOs).textContent = `${roleInfo.badge} / ${roleInfo.roleKey}`;
 			document.getElementById("current_action__" + personaNameOs).innerHTML = personaStatus.action;
 			document.getElementById("target_address__" + personaNameOs).innerHTML = personaStatus.location;
-			document.getElementById("chat__" + personaNameOs).innerHTML = chatContent;
+			document.getElementById("panel_target__" + personaNameOs).textContent = formatTileText(movementTarget);
+			document.getElementById("panel_path_len__" + personaNameOs).textContent = String(movementPathLength);
+			document.getElementById("panel_env__" + personaNameOs).textContent = formatTileText(envTile);
+			document.getElementById("panel_chat_exists__" + personaNameOs).textContent = hasChat ? "yes" : "no";
+			document.getElementById("panel_chat_source__" + personaNameOs).textContent = sourceType;
 		}
 	}
 
@@ -604,9 +682,9 @@
 		for (let i = 0; i < Object.keys(personas).length; i++) {
 			let personaName = Object.keys(personas)[i];
 			if (!execute_movement["persona"][personaName]) continue;
-			let role = roleForName(personaName);
+			const roleInfo = resolveRolePresentation(personaName, execute_movement["persona"][personaName]);
 			let content = execute_movement["persona"][personaName]["pronunciatio"] || "\ud83e\udd22";
-			pronunciatios[personaName].setText(role.tag + " " + buildInitials(personaName) + ": " + content);
+			pronunciatios[personaName].setText(roleInfo.badge + " " + buildInitials(personaName) + ": " + content);
 		}
 	}
 
@@ -786,7 +864,7 @@
 		camera.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
 		camera.setZoom(2);
 		for (const personaName in persona_names) {
-			createPersonaVisual(this, personaName, persona_names[personaName]);
+			createPersonaVisual(this, personaName, persona_names[personaName], null);
 		}
 		ensureSpriteAnimations(this.anims, "Doctor_1");
 		ensureSpriteAnimations(this.anims, "Triage_Nurse_1");
@@ -874,7 +952,7 @@
 		for (let j = 0; j < diff.length; j++) {
 			const personaName = diff[j];
 			if (!Object.keys(personas).includes(personaName)) {
-				createPersonaVisual(this, personaName, execute_movement["persona"][personaName]["movement"]);
+				createPersonaVisual(this, personaName, execute_movement["persona"][personaName]["movement"], execute_movement["persona"][personaName]);
 			} else if (!Object.keys(execute_movement["persona"]).includes(personaName)) {
 				removePersonaVisual(personaName);
 			}
@@ -915,16 +993,16 @@
 		}
 	}
 
-	function addNewPersonaSection(p_name, p_name_os, currentAction, location, conversation) {
+	function addNewPersonaSection(p_name, p_name_os, currentAction, location, conversation, movementInfo) {
 		const personasContainer = document.getElementById("personas-container");
 		if (!personasContainer) return;
 		if (document.getElementById("current_action__" + p_name_os)) return;
-		const roleKey = roleKeyForName(p_name);
+		const roleInfo = resolveRolePresentation(p_name, movementInfo);
+		const roleKey = roleInfo.roleKey;
 		const avatarKey = avatarKeyForRole(roleKey);
 		const avatarPath = avatarPathForRole(roleKey);
 		const initialAction = currentAction || "<em>Waiting for first update</em>";
 		const initialLocation = location || "<em>Not available yet</em>";
-		const initialConversation = conversation || "<em>None at the moment</em>";
 		const newPersonaHtml = `
 			<div class="media" id="on_screen_det_content-${p_name_os}" data-role-key="${roleKey}" data-avatar-key="${avatarKey}" data-figure-key="${avatarKey}" style="background-color:#EEEEEE; padding:1em; padding-left:3.5em; padding-right:2em; border-radius:10px">
 				<div class="media-left media-middle">
@@ -940,9 +1018,15 @@
 						</h2>
 					</div>
 					<div>
-						<p style="font-size:1.2em"><strong>Current Action:</strong><br><span id="current_action__${p_name_os}">${initialAction}</span></p>
-						<p style="font-size:1.2em"><strong>Location:</strong><br><span id="target_address__${p_name_os}">${initialLocation}</span></p>
-						<p style="font-size:1.2em"><strong>Current Conversation:</strong><br><span id="chat__${p_name_os}">${initialConversation}</span></p>
+						<p style="font-size:1.05em; margin-bottom:8px;"><strong>Step:</strong> <span id="panel_step__${p_name_os}">--</span></p>
+						<p style="font-size:1.05em; margin-bottom:8px;"><strong>Role / Badge:</strong> <span id="panel_role__${p_name_os}">--</span></p>
+						<p style="font-size:1.05em; margin-bottom:8px;"><strong>Description:</strong><br><span id="current_action__${p_name_os}">${initialAction}</span></p>
+						<p style="font-size:1.05em; margin-bottom:8px;"><strong>Movement Target:</strong> <span id="panel_target__${p_name_os}">--</span></p>
+						<p style="font-size:1.05em; margin-bottom:8px;"><strong>Movement Path Length:</strong> <span id="panel_path_len__${p_name_os}">--</span></p>
+						<p style="font-size:1.05em; margin-bottom:8px;"><strong>Environment X/Y:</strong> <span id="panel_env__${p_name_os}">--</span></p>
+						<p style="font-size:1.05em; margin-bottom:8px;"><strong>Chat Exists:</strong> <span id="panel_chat_exists__${p_name_os}">--</span></p>
+						<p style="font-size:1.05em; margin-bottom:8px;"><strong>Chat Source:</strong> <span id="panel_chat_source__${p_name_os}">--</span></p>
+						<p style="font-size:1.05em; margin-bottom:0;"><strong>Location:</strong><br><span id="target_address__${p_name_os}">${initialLocation}</span></p>
 					</div>
 				</div>
 			</div>

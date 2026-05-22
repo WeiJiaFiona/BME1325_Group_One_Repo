@@ -56,6 +56,7 @@ def _resolve_pointer_path(path: Path) -> Path:
 STORAGE_ROOT = _resolve_pointer_path(FRONTEND_ROOT / "storage")
 TEMP_ROOT = _resolve_pointer_path(Path(os.environ.get("EDSIM_TEMP_DIR", str(FRONTEND_ROOT / "temp_storage"))))
 fs_temp_storage = str(TEMP_ROOT)
+_UNSET = object()
 
 
 def _storage_path(*parts: str) -> str:
@@ -64,6 +65,53 @@ def _storage_path(*parts: str) -> str:
 
 def _temp_path(*parts: str) -> str:
     return str(TEMP_ROOT.joinpath(*parts))
+
+
+def _log_path(*parts: str) -> str:
+    return str(FRONTEND_ROOT.joinpath("logs", *parts))
+
+
+def _write_crash_log(message: str, *, append: bool = True) -> None:
+    try:
+        log_dir = Path(_log_path())
+        log_dir.mkdir(parents=True, exist_ok=True)
+        mode = "a" if append else "w"
+        with open(_log_path("crash.log"), mode, encoding="utf-8") as log_file:
+            log_file.write(str(message))
+            if not str(message).endswith("\n"):
+                log_file.write("\n")
+    except Exception:
+        return
+
+
+def _append_bridge_request_log(
+    request,
+    *,
+    status: int,
+    ok: bool,
+    sim_code: Optional[str] = None,
+    step: Optional[int] = None,
+    error: str = "",
+) -> None:
+    """Persist a lightweight JSONL trace for bridge endpoints only."""
+    entry = {
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "remote_addr": str(request.META.get("REMOTE_ADDR") or ""),
+        "method": str(request.method or ""),
+        "path": str(request.path or ""),
+        "sim_code": sim_code,
+        "step": step,
+        "status": int(status),
+        "ok": bool(ok),
+        "error": str(error or ""),
+    }
+    try:
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with open(_temp_path("bridge_requests.jsonl"), "a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(entry, ensure_ascii=True) + "\n")
+    except Exception:
+        # Debug logging must never break the bridge contract itself.
+        return
 
 def _backend_mode() -> str:
     mode = str(os.environ.get("EDSIM_MODE", "auto")).strip().lower()
@@ -266,7 +314,7 @@ def _cleanup_stale_runtime_state():
             cmd_file.unlink(missing_ok=True)
         except Exception:
             pass
-    for temp_name in ("curr_step.json",):
+    for temp_name in ("curr_step.json", "curr_sim_code.json", "sim_output.json"):
         try:
             Path(_temp_path(temp_name)).unlink(missing_ok=True)
         except Exception:
@@ -280,6 +328,15 @@ def _coerce_seed_value(raw_value, default: int = 1337) -> int:
         return int(raw_value)
     except (TypeError, ValueError):
         return default
+
+
+def _coerce_seed_or_none(raw_value):
+    if raw_value in ("", None):
+        return None
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _terminate_backend_processes(pids: list[int]) -> list[int]:
@@ -418,6 +475,206 @@ def _build_runtime_sync(sim_code: str, status_step: Optional[int] = None) -> dic
     ]
     return runtime_sources
 
+
+def _runtime_trace_defaults() -> dict:
+    return {
+        "run_id": None,
+        "started_at": None,
+        "requested_seed": None,
+        "resolved_seed": None,
+        "backend_movement_max_step": None,
+        "frontend_environment_max_step": None,
+        "curr_step": None,
+        "last_update_step": None,
+        "last_process_step": None,
+        "lag": None,
+        "blocked_reason": "initializing",
+    }
+
+
+def _runtime_trace_path(sim_code: str) -> Path:
+    return Path(_storage_path(sim_code, "runtime_trace.json"))
+
+
+def _coerce_optional_int(value):
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_runtime_trace(sim_code: str) -> dict:
+    payload = _runtime_trace_defaults()
+    path = _runtime_trace_path(sim_code)
+    if not path.exists():
+        return payload
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return payload
+    if not isinstance(raw, dict):
+        return payload
+    for key in payload.keys():
+        if key in raw:
+            payload[key] = raw[key]
+    for int_key in (
+        "requested_seed",
+        "resolved_seed",
+        "backend_movement_max_step",
+        "frontend_environment_max_step",
+        "curr_step",
+        "last_update_step",
+        "last_process_step",
+        "lag",
+    ):
+        payload[int_key] = _coerce_optional_int(payload.get(int_key))
+    return payload
+
+
+def _write_runtime_trace(sim_code: str, trace_payload: dict) -> dict:
+    path = _runtime_trace_path(sim_code)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(trace_payload, f, indent=2)
+    return trace_payload
+
+
+def _remove_step_snapshot_files(directory: Path) -> int:
+    removed = 0
+    if not directory.exists():
+        return removed
+    for file_path in directory.glob("*.json"):
+        try:
+            int(file_path.stem)
+        except (TypeError, ValueError):
+            continue
+        try:
+            file_path.unlink(missing_ok=True)
+            removed += 1
+        except Exception:
+            continue
+    return removed
+
+
+def _read_meta_seed(sim_code: str):
+    meta_path = Path(_storage_path(sim_code, "reverie", "meta.json"))
+    if not meta_path.exists():
+        return None
+    try:
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return _coerce_seed_or_none(payload.get("seed"))
+
+
+def _derive_blocked_reason(runtime_sync: dict, backend_health: dict) -> str:
+    if backend_health.get("stalled"):
+        return "backend_not_consuming_commands"
+    movement_step = _coerce_optional_int(runtime_sync.get("latest_movement_step"))
+    environment_step = _coerce_optional_int(runtime_sync.get("latest_environment_step"))
+    curr_step = _coerce_optional_int(runtime_sync.get("curr_step_pointer"))
+    if movement_step is None:
+        return "movement_step_missing"
+    if environment_step is None:
+        return "environment_step_missing"
+    if environment_step > movement_step:
+        return "environment_ahead_of_movement"
+    if movement_step > (environment_step + 1):
+        return "environment_writeback_lag"
+    if curr_step is not None and curr_step > (movement_step + 1):
+        return "curr_step_ahead_of_movement"
+    if not bool(runtime_sync.get("in_sync")):
+        return "runtime_not_in_sync"
+    return "none"
+
+
+def _sync_runtime_trace(
+    sim_code: str,
+    *,
+    run_id=_UNSET,
+    started_at=_UNSET,
+    requested_seed=_UNSET,
+    resolved_seed=_UNSET,
+    last_update_step=_UNSET,
+    last_process_step=_UNSET,
+    blocked_reason=_UNSET,
+) -> dict:
+    status_step = _read_status_step(sim_code)
+    runtime_sync = _build_runtime_sync(sim_code, status_step=status_step)
+    backend_health = _runtime_backend_health(sim_code)
+    trace = _read_runtime_trace(sim_code)
+    if not trace.get("run_id"):
+        trace["run_id"] = str(uuid.uuid4())
+    if not trace.get("started_at"):
+        trace["started_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    if run_id is not _UNSET:
+        trace["run_id"] = run_id
+    if started_at is not _UNSET:
+        trace["started_at"] = started_at
+    if requested_seed is not _UNSET:
+        trace["requested_seed"] = _coerce_optional_int(requested_seed)
+    if resolved_seed is not _UNSET:
+        trace["resolved_seed"] = _coerce_optional_int(resolved_seed)
+    if last_update_step is not _UNSET:
+        trace["last_update_step"] = _coerce_optional_int(last_update_step)
+    if last_process_step is not _UNSET:
+        trace["last_process_step"] = _coerce_optional_int(last_process_step)
+
+    trace["backend_movement_max_step"] = _coerce_optional_int(runtime_sync.get("latest_movement_step"))
+    trace["frontend_environment_max_step"] = _coerce_optional_int(runtime_sync.get("latest_environment_step"))
+    trace["curr_step"] = _coerce_optional_int(runtime_sync.get("curr_step_pointer"))
+
+    if trace["backend_movement_max_step"] is None or trace["frontend_environment_max_step"] is None:
+        trace["lag"] = None
+    else:
+        trace["lag"] = max(0, trace["backend_movement_max_step"] - trace["frontend_environment_max_step"])
+
+    if blocked_reason is _UNSET:
+        trace["blocked_reason"] = _derive_blocked_reason(runtime_sync, backend_health)
+    else:
+        trace["blocked_reason"] = str(blocked_reason)
+
+    _write_runtime_trace(sim_code, trace)
+    return trace
+
+
+def _reset_runtime_state_for_new_run(sim_code: str, *, requested_seed=None) -> dict:
+    sim_code = _normalize_sim_code(sim_code) or sim_code
+    movement_dir = Path(_storage_path(sim_code, "movement"))
+    environment_dir = Path(_storage_path(sim_code, "environment"))
+    movement_dir.mkdir(parents=True, exist_ok=True)
+    environment_dir.mkdir(parents=True, exist_ok=True)
+
+    _remove_step_snapshot_files(movement_dir)
+    _remove_step_snapshot_files(environment_dir)
+    for stale_file in (
+        Path(_storage_path(sim_code, "sim_status.json")),
+        Path(_storage_path(sim_code, "runtime_trace.json")),
+        Path(_storage_path(sim_code, "dialogue_trace.jsonl")),
+        Path(_temp_path("curr_step.json")),
+    ):
+        try:
+            stale_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    run_id = str(uuid.uuid4())
+    started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    trace = _sync_runtime_trace(
+        sim_code,
+        run_id=run_id,
+        started_at=started_at,
+        requested_seed=requested_seed,
+        resolved_seed=None,
+        last_update_step=None,
+        last_process_step=None,
+        blocked_reason="runtime_reset",
+    )
+    return trace
+
 def landing(request): 
     context = {}
     template = "landing/landing.html"
@@ -510,7 +767,7 @@ def home(request):
     if requested_ui_mode not in {"auto", "user"}:
         requested_ui_mode = "auto"
     backend_mode = _effective_backend_mode(request)
-    effective_ui_mode = requested_ui_mode if backend_mode == "auto" else backend_mode
+    effective_ui_mode = backend_mode
     mode_switch_message = ""
     if requested_ui_mode != effective_ui_mode:
         mode_switch_message = (
@@ -777,34 +1034,69 @@ def process_environment(request):
         HttpResponse: string confirmation message. 
     """
     if request.method != "POST":
-        return JsonResponse({"ok": False, "error": "POST required"}, status=405)
+        payload = {"ok": False, "error": "POST required"}
+        _append_bridge_request_log(request, status=405, ok=False, error=payload["error"])
+        return JsonResponse(payload, status=405)
 
     try:
         data = json.loads(request.body or b"{}")
     except json.JSONDecodeError:
-        return JsonResponse({"ok": False, "error": "invalid JSON payload"}, status=400)
+        payload = {"ok": False, "error": "invalid JSON payload"}
+        _append_bridge_request_log(request, status=400, ok=False, error=payload["error"])
+        return JsonResponse(payload, status=400)
 
     if not isinstance(data, dict):
-        return JsonResponse({"ok": False, "error": "payload must be a JSON object"}, status=400)
+        payload = {"ok": False, "error": "payload must be a JSON object"}
+        _append_bridge_request_log(request, status=400, ok=False, error=payload["error"])
+        return JsonResponse(payload, status=400)
 
     missing = [key for key in ("step", "sim_code", "environment") if key not in data]
     if missing:
-        return JsonResponse({"ok": False, "error": f"missing required fields: {', '.join(missing)}"}, status=400)
+        payload = {"ok": False, "error": f"missing required fields: {', '.join(missing)}"}
+        _append_bridge_request_log(
+            request,
+            status=400,
+            ok=False,
+            sim_code=str(data.get("sim_code") or "").strip() or None,
+            error=payload["error"],
+        )
+        return JsonResponse(payload, status=400)
 
     try:
         step = int(data["step"])
     except (TypeError, ValueError):
-        return JsonResponse({"ok": False, "error": "step must be an integer"}, status=400)
+        payload = {"ok": False, "error": "step must be an integer"}
+        _append_bridge_request_log(
+            request,
+            status=400,
+            ok=False,
+            sim_code=str(data.get("sim_code") or "").strip() or None,
+            error=payload["error"],
+        )
+        return JsonResponse(payload, status=400)
     if step < 0:
-        return JsonResponse({"ok": False, "error": "step must be >= 0"}, status=400)
+        payload = {"ok": False, "error": "step must be >= 0"}
+        _append_bridge_request_log(
+            request,
+            status=400,
+            ok=False,
+            sim_code=str(data.get("sim_code") or "").strip() or None,
+            step=step,
+            error=payload["error"],
+        )
+        return JsonResponse(payload, status=400)
 
     sim_code = str(data["sim_code"]).strip()
     if not sim_code:
-        return JsonResponse({"ok": False, "error": "sim_code must be a non-empty string"}, status=400)
+        payload = {"ok": False, "error": "sim_code must be a non-empty string"}
+        _append_bridge_request_log(request, status=400, ok=False, step=step, error=payload["error"])
+        return JsonResponse(payload, status=400)
 
     environment_payload = data["environment"]
     if not isinstance(environment_payload, dict):
-        return JsonResponse({"ok": False, "error": "environment must be an object"}, status=400)
+        payload = {"ok": False, "error": "environment must be an object"}
+        _append_bridge_request_log(request, status=400, ok=False, sim_code=sim_code, step=step, error=payload["error"])
+        return JsonResponse(payload, status=400)
 
     try:
         environment = _sanitize_environment_snapshot(sim_code, environment_payload)
@@ -814,11 +1106,18 @@ def process_environment(request):
             json.dump(environment, outfile, indent=2)
             outfile.flush()
     except OSError as exc:
-        return JsonResponse({"ok": False, "error": f"failed to write environment snapshot: {exc}"}, status=500)
+        payload = {"ok": False, "error": f"failed to write environment snapshot: {exc}"}
+        _append_bridge_request_log(request, status=500, ok=False, sim_code=sim_code, step=step, error=payload["error"])
+        return JsonResponse(payload, status=500)
     except Exception as exc:
-        return JsonResponse({"ok": False, "error": f"unexpected process_environment error: {exc}"}, status=500)
+        payload = {"ok": False, "error": f"unexpected process_environment error: {exc}"}
+        _append_bridge_request_log(request, status=500, ok=False, sim_code=sim_code, step=step, error=payload["error"])
+        return JsonResponse(payload, status=500)
 
-    return JsonResponse({"ok": True, "step": step, "sim_code": sim_code})
+    payload = {"ok": True, "step": step, "sim_code": sim_code}
+    _sync_runtime_trace(sim_code, last_process_step=step)
+    _append_bridge_request_log(request, status=200, ok=True, sim_code=sim_code, step=step)
+    return JsonResponse(payload)
 
 def update_environment(request): 
     """
@@ -842,7 +1141,16 @@ def update_environment(request):
         with open(_storage_path(sim_code, "movement", f"{step}.json")) as json_file: 
             response_data = json.load(json_file)
             response_data["<step>"] = step
-
+    if response_data.get("<step>") == step:
+        _sync_runtime_trace(str(sim_code).strip(), last_update_step=step)
+    _append_bridge_request_log(
+        request,
+        status=200,
+        ok=response_data.get("<step>") == step,
+        sim_code=str(sim_code).strip() or None,
+        step=int(step) if str(step).strip() else None,
+        error="" if response_data.get("<step>") == step else "movement step not available",
+    )
     return JsonResponse(response_data)
 
 def path_tester_update(request): 
@@ -889,7 +1197,6 @@ def send_sim_command(request):
     try:
         payload = json.loads(request.body)
         cmd = payload.get("command")
-        args = payload.get("args") or {}
         if not cmd:
             return JsonResponse({"ok": False, "error": "no command provided"}, status=400)
     except Exception as e:
@@ -901,7 +1208,7 @@ def send_sim_command(request):
     cmd_id = str(int(time.time() * 1000))
     file_path = cmd_dir / f"cmd_{cmd_id}.json"
     with open(file_path, "w") as f:
-        json.dump({"id": cmd_id, "command": cmd, "args": args, "created_at": datetime.datetime.utcnow().isoformat()}, f)
+        json.dump({"id": cmd_id, "command": cmd, "created_at": datetime.datetime.utcnow().isoformat()}, f)
 
     return JsonResponse({"ok": True, "id": cmd_id})
 
@@ -992,6 +1299,7 @@ def start_backend(request, origin, target):
         running_pids = _list_running_reverie_processes(backend_dir)
         backend_health = _runtime_backend_health(target, backend_dir=backend_dir)
         if running_pids and not backend_health.get("stalled"):
+            _sync_runtime_trace(target)
             return JsonResponse({
                 "ok": running_pids[0],
                 "backend_dir": str(backend_dir),
@@ -999,11 +1307,17 @@ def start_backend(request, origin, target):
                 "running_pids": running_pids,
                 "backend_health": backend_health,
             })
-        if backend_health.get("stalled"):
+        stale_runtime = bool(check_if_file_exists(_temp_path("curr_step.json"))) and not running_pids
+        if backend_health.get("stalled") or stale_runtime:
             _terminate_backend_processes(running_pids)
             _cleanup_stale_runtime_state()
-        if check_if_file_exists(_temp_path("curr_step.json")): 
+        if check_if_file_exists(_temp_path("curr_step.json")):
             os.remove(_temp_path("curr_step.json"))
+        trace_snapshot = _read_runtime_trace(target)
+        if not trace_snapshot.get("run_id"):
+            _reset_runtime_state_for_new_run(target, requested_seed=_read_meta_seed(origin))
+        else:
+            _sync_runtime_trace(target)
 
 
         arguments = ["--frontend_ui", "yes", "--origin", origin, "--target", target]
@@ -1014,35 +1328,68 @@ def start_backend(request, origin, target):
         backend_env = os.environ.copy()
         backend_env.setdefault("PYTHONUTF8", "1")
         backend_env.setdefault("PYTHONIOENCODING", "utf-8")
+        backend_env.setdefault("LLM_MODE", "local_only")
+        backend_env.setdefault("EMBEDDING_MODE", "local_only")
+        backend_env.setdefault("ENABLE_LLM_AGENTS", "0")
         curr_sim = None
+        log_handle = None
+        _write_crash_log(
+            json.dumps({
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "event": "start_backend",
+                "origin": origin,
+                "target": target,
+                "headless": headless_flag,
+                "stale_runtime_detected": stale_runtime,
+                "prelaunch_health": backend_health,
+            }, ensure_ascii=False),
+            append=False,
+        )
         if sys.platform == "win32":
-            startup_info = subprocess.STARTUPINFO()
-            startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startup_info.wShowWindow = 2
+            if headless_flag:
+                log_handle = open(_log_path("crash.log"), "a", encoding="utf-8")
+                curr_sim = subprocess.Popen(
+                    cmd,
+                    cwd=str(backend_dir),
+                    env=backend_env,
+                    stdout=log_handle,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                )
+            else:
+                startup_info = subprocess.STARTUPINFO()
+                startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startup_info.wShowWindow = 2
 
-            curr_sim = subprocess.Popen(
-                cmd,
-                cwd=str(backend_dir),
-                env=backend_env,
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
-                startupinfo=startup_info
-            )
+                curr_sim = subprocess.Popen(
+                    cmd,
+                    cwd=str(backend_dir),
+                    env=backend_env,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    startupinfo=startup_info
+                )
         elif sys.platform == "darwin":
-            import shlex, json
+            import shlex
+            import json as json_module
 
             cmd_str = f"cd {shlex.quote(str(backend_dir))} && {shlex.quote(sys.executable)} reverie.py"
-            applescript = f'tell application "Terminal" to do script {json.dumps(cmd_str)}'
+            applescript = f'tell application "Terminal" to do script {json_module.dumps(cmd_str)}'
             subprocess.Popen(["osascript", "-e", applescript])
 
 
         else:
+            log_handle = open(_log_path("crash.log"), "a", encoding="utf-8")
             curr_sim = subprocess.Popen(
                 cmd,
                 cwd=str(backend_dir),
                 env=backend_env,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
             )
         start_wait = time.time()
         startup_ok = False
+        exited_early = False
         while True:
             curr_step_exists = check_if_file_exists(_temp_path("curr_step.json"))
             curr_sim_ok = False
@@ -1051,16 +1398,43 @@ def start_backend(request, origin, target):
                 curr_sim_ok = _current_sim_code("") == target
             except Exception:
                 curr_sim_ok = False
-            # Startup should not fail just because sim_status.json is not yet
-            # materialized before the first run command.
-            if curr_step_exists and curr_sim_ok:
+            current_running_pids = _list_running_reverie_processes(backend_dir)
+            if curr_sim is not None and curr_sim.poll() is not None and not current_running_pids:
+                exited_early = True
+                break
+            if curr_step_exists and curr_sim_ok and current_running_pids and status_exists:
                 startup_ok = True
                 break
             if time.time() - start_wait > 20:
                 break
             time.sleep(0.5)
         post_health = _runtime_backend_health(target, backend_dir=backend_dir)
+        _sync_runtime_trace(target)
+        if log_handle:
+            try:
+                log_handle.flush()
+                log_handle.close()
+            except Exception:
+                pass
         if not startup_ok:
+            _write_crash_log(
+                json.dumps({
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "event": "start_backend_health_failure",
+                    "origin": origin,
+                    "target": target,
+                    "headless": headless_flag,
+                    "exited_early": exited_early,
+                    "returncode": curr_sim.poll() if curr_sim else None,
+                    "post_health": post_health,
+                    "health_expected": {
+                        "curr_step_exists": True,
+                        "curr_sim_matches_target": True,
+                        "running_pids_non_empty": True,
+                        "sim_status_exists": True,
+                    },
+                }, ensure_ascii=False)
+            )
             return JsonResponse({
                 "ok": False,
                 "error": "Backend failed health check after startup.",
@@ -1069,7 +1443,8 @@ def start_backend(request, origin, target):
                 "health_expected": {
                     "curr_step_exists": True,
                     "curr_sim_matches_target": True,
-                    "sim_status_exists": "optional_at_startup",
+                    "running_pids_non_empty": True,
+                    "sim_status_exists": True,
                 },
             }, status=503)
         return JsonResponse({
@@ -1123,6 +1498,7 @@ def live_dashboard_api(request):
         status_step = None
     data["runtime_sync"] = _build_runtime_sync(sim_code, status_step=status_step)
     data["backend_health"] = _runtime_backend_health(sim_code)
+    data["runtime_trace"] = _sync_runtime_trace(sim_code)
 
     # Optionally include completed patient stage times
     if request.GET.get("include_stages") == "true":
@@ -1280,10 +1656,11 @@ def save_simulation_settings(request):
         for key in allowed_keys:
             if key in payload:
                 meta[key] = payload[key]
-        meta["seed"] = _coerce_seed_value(meta.get("seed"), default=1337)
+        meta["seed"] = _coerce_seed_or_none(meta.get("seed"))
 
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=2)
+        _reset_runtime_state_for_new_run("curr_sim", requested_seed=meta.get("seed"))
 
         return JsonResponse({"ok": True})
 
@@ -1408,6 +1785,8 @@ def _json_error(exc: ApiError):
 def api_mode_user_encounter_start(request):
     if request.method != "POST":
         return _json_error(ApiError("POST required", status_code=405, error_code="METHOD_NOT_ALLOWED"))
+    if _backend_mode() != "user":
+        return _json_error(ApiError("User mode requires restarting backend with EDSIM_MODE=user", status_code=409, error_code="MODE_MISMATCH"))
 
     try:
         payload = _parse_json_body(request)
@@ -1466,6 +1845,8 @@ def api_ed_queue_snapshot(request):
 def api_mode_user_chat_turn(request):
     if request.method != "POST":
         return _json_error(ApiError("POST required", status_code=405, error_code="METHOD_NOT_ALLOWED"))
+    if _backend_mode() != "user":
+        return _json_error(ApiError("User mode requires restarting backend with EDSIM_MODE=user", status_code=409, error_code="MODE_MISMATCH"))
 
     try:
         payload = _parse_json_body(request)
@@ -1481,6 +1862,8 @@ def api_mode_user_chat_turn(request):
 def api_mode_user_session_status(request):
     if request.method != "GET":
         return _json_error(ApiError("GET required", status_code=405, error_code="METHOD_NOT_ALLOWED"))
+    if _backend_mode() != "user":
+        return _json_error(ApiError("User mode requires restarting backend with EDSIM_MODE=user", status_code=409, error_code="MODE_MISMATCH"))
 
     try:
         result = user_mode_session_status()
@@ -1495,6 +1878,8 @@ def api_mode_user_session_status(request):
 def api_mode_user_session_reset(request):
     if request.method != "POST":
         return _json_error(ApiError("POST required", status_code=405, error_code="METHOD_NOT_ALLOWED"))
+    if _backend_mode() != "user":
+        return _json_error(ApiError("User mode requires restarting backend with EDSIM_MODE=user", status_code=409, error_code="MODE_MISMATCH"))
 
     try:
         result = reset_user_mode_session()

@@ -1,0 +1,13 @@
+{
+  "run_id": "29616b4b-0222-4331-be65-b7880aa99f0d",
+  "started_at": "2026-05-22T09:11:48.821879+00:00",
+  "requested_seed": null,
+  "resolved_seed": null,
+  "backend_movement_max_step": 99,
+  "frontend_environment_max_step": 100,
+  "curr_step": 100,
+  "last_update_step": 99,
+  "last_process_step": 100,
+  "lag": 0,
+  "blocked_reason": "environment_ahead_of_movement"
+}

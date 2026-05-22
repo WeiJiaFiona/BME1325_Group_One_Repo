@@ -259,6 +259,34 @@ class TestRuntimeCleanupHelpers(TestCase):
             self.assertFalse(Path(os.path.join(temp_dir, "commands", "cmd_1.json")).exists())
             self.assertTrue(Path(os.path.join(temp_dir, "bridge_requests.jsonl")).exists())
 
+    def test_reset_runtime_state_removes_dialogue_trace_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as storage_dir:
+            sim_code = "reset-dialogue-trace"
+
+            def fake_temp_path(*parts):
+                return os.path.join(temp_dir, *parts)
+
+            def fake_storage_path(*parts):
+                return os.path.join(storage_dir, *parts)
+
+            os.makedirs(os.path.join(storage_dir, sim_code, "movement"), exist_ok=True)
+            os.makedirs(os.path.join(storage_dir, sim_code, "environment"), exist_ok=True)
+            Path(os.path.join(storage_dir, sim_code, "movement", "0.json")).write_text("{}", encoding="utf-8")
+            Path(os.path.join(storage_dir, sim_code, "environment", "0.json")).write_text("{}", encoding="utf-8")
+            Path(os.path.join(storage_dir, sim_code, "dialogue_trace.jsonl")).write_text('{"step":0}\n', encoding="utf-8")
+
+            with patch("translator.views._temp_path", side_effect=fake_temp_path), \
+                 patch("translator.views._storage_path", side_effect=fake_storage_path):
+                from translator import views
+
+                trace = views._reset_runtime_state_for_new_run(sim_code, requested_seed=123)
+
+            self.assertFalse(Path(os.path.join(storage_dir, sim_code, "movement", "0.json")).exists())
+            self.assertFalse(Path(os.path.join(storage_dir, sim_code, "environment", "0.json")).exists())
+            self.assertFalse(Path(os.path.join(storage_dir, sim_code, "dialogue_trace.jsonl")).exists())
+            self.assertEqual(trace.get("requested_seed"), 123)
+            self.assertTrue(trace.get("run_id"))
+
 
 class TestDashboardRuntimeSync(TestCase):
     def test_live_dashboard_api_exposes_runtime_sync_metadata(self):

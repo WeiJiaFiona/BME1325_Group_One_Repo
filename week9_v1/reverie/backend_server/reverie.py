@@ -268,11 +268,130 @@ def _clear_step_snapshots(sim_folder):
         file_path.unlink(missing_ok=True)
       except Exception:
         continue
-  for file_name in ("sim_status.json", "runtime_trace.json"):
+  for file_name in ("sim_status.json", "runtime_trace.json", "dialogue_trace.jsonl"):
     try:
       (Path(sim_folder) / file_name).unlink(missing_ok=True)
     except Exception:
       continue
+
+
+_ROLE_SCHEMA_MAP = {
+  "Doctor": {"role_key": "doctor", "badge": "DR"},
+  "TriageNurse": {"role_key": "triage_nurse", "badge": "TN"},
+  "BedsideNurse": {"role_key": "bed_nurse", "badge": "BN"},
+  "Patient": {"role_key": "patient", "badge": "PT"},
+}
+
+_ALLOWED_DIALOGUE_SOURCE_TYPES = {
+  "none",
+  "agent_chat_v2_iterative",
+  "local_fail_safe",
+  "rule_based",
+}
+
+_ALLOWED_LLM_MODES = {"local_only", "hybrid", "remote_only"}
+
+
+def _resolve_role_schema(persona_role):
+  payload = _ROLE_SCHEMA_MAP.get(str(persona_role or "").strip())
+  if payload:
+    return payload
+  return {"role_key": "other", "badge": "OT"}
+
+
+def _resolve_llm_mode_from_env():
+  raw_mode = str(os.environ.get("EDSIM_LLM_MODE", "remote_only")).strip().lower()
+  if raw_mode in _ALLOWED_LLM_MODES:
+    return raw_mode
+  if raw_mode == "remote":
+    return "remote_only"
+  return "remote_only"
+
+
+def _dialogue_template_paths(persona_role):
+  role_name = str(persona_role or "Unknown").strip() or "Unknown"
+  prompt_path = f"persona/prompt_template/ED/v3_ChatGPT/{role_name}/iterative_convo_v1.txt"
+  summary_path = f"persona/prompt_template/ED/v3_ChatGPT/{role_name}/summarize_conversation_v1.txt"
+  return prompt_path, summary_path
+
+
+def _build_dialogue_provenance_payload(persona, chat_payload):
+  runtime_meta = getattr(persona, "runtime_dialogue_provenance", None)
+  prompt_template_path, summary_template_path = _dialogue_template_paths(getattr(persona, "role", None))
+  chat_present = isinstance(chat_payload, list) and len(chat_payload) > 0
+  default_llm_mode = _resolve_llm_mode_from_env()
+
+  payload = {
+    "chat_present": bool(chat_present),
+    "source_type": "rule_based" if chat_present else "none",
+    "llm_mode": default_llm_mode,
+    "generator": "agent_chat_v2",
+    "prompt_template_path": prompt_template_path,
+    "summary_template_path": summary_template_path,
+    "fallback_used": False,
+    "fallback_reason": None,
+    "local_library_paths": [prompt_template_path, summary_template_path],
+  }
+
+  if isinstance(runtime_meta, dict):
+    source_type = str(runtime_meta.get("source_type") or "").strip()
+    if source_type in _ALLOWED_DIALOGUE_SOURCE_TYPES:
+      payload["source_type"] = source_type
+    llm_mode = str(runtime_meta.get("llm_mode") or "").strip().lower()
+    if llm_mode in _ALLOWED_LLM_MODES:
+      payload["llm_mode"] = llm_mode
+    generator = str(runtime_meta.get("generator") or "").strip()
+    if generator:
+      payload["generator"] = generator
+    prompt_path = str(runtime_meta.get("prompt_template_path") or "").strip()
+    if prompt_path:
+      payload["prompt_template_path"] = prompt_path
+    summary_path = str(runtime_meta.get("summary_template_path") or "").strip()
+    if summary_path:
+      payload["summary_template_path"] = summary_path
+    payload["fallback_used"] = bool(runtime_meta.get("fallback_used", False))
+    fallback_reason = runtime_meta.get("fallback_reason")
+    payload["fallback_reason"] = str(fallback_reason) if fallback_reason not in (None, "") else None
+    libraries = runtime_meta.get("local_library_paths")
+    if isinstance(libraries, list):
+      cleaned = [str(path).strip() for path in libraries if str(path).strip()]
+      if cleaned:
+        payload["local_library_paths"] = cleaned
+
+  if not payload["chat_present"]:
+    payload["source_type"] = "none"
+    payload["fallback_used"] = False
+    payload["fallback_reason"] = None
+
+  # Do not leak stale chat metadata into future non-chat ticks.
+  setattr(persona, "runtime_dialogue_provenance", None)
+  return payload
+
+
+def _build_movement_persona_payload(persona, movement_tile, movement_path, pronunciatio, description, chat_payload):
+  role_schema = _resolve_role_schema(getattr(persona, "role", None))
+  dialogue_provenance = _build_dialogue_provenance_payload(persona, chat_payload)
+  return {
+    "schema_version": "persona_movement_v2",
+    "role": str(getattr(persona, "role", "Unknown")),
+    "role_key": role_schema["role_key"],
+    "badge": role_schema["badge"],
+    "role_source": "backend_explicit_role_map_v1",
+    "movement": movement_tile,
+    "movement_path": movement_path,
+    "path_length": max(0, len(movement_path) - 1),
+    "pronunciatio": pronunciatio,
+    "description": description,
+    "chat": chat_payload,
+    "dialogue_provenance": dialogue_provenance,
+  }
+
+
+def _append_dialogue_trace_record(trace_path, record):
+  trace_file = Path(trace_path)
+  trace_file.parent.mkdir(parents=True, exist_ok=True)
+  with open(trace_file, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 ##############################################################################
 #                                  REVERIE                                   #
@@ -334,11 +453,13 @@ class ReverieServer:
     reverie_meta["seed"] = self.seed
     _atomic_write_json(self.meta_path, reverie_meta)
     self.runtime_trace_path = f"{sim_folder}/runtime_trace.json"
-    _write_runtime_trace(
+    trace_payload = _write_runtime_trace(
       self.runtime_trace_path,
       resolved_seed=self.seed,
       blocked_reason="backend_booted",
     )
+    self.run_id = trace_payload.get("run_id")
+    self.dialogue_trace_path = f"{sim_folder}/dialogue_trace.jsonl"
 
     # LOADING REVERIE'S GLOBAL VARIABLES
     # The start datetime of the Reverie: 
@@ -2361,8 +2482,7 @@ class ReverieServer:
                   travel_area = persona_bucket.setdefault("travel_time_area", {})
                   if pre_area:
                     travel_area[pre_area] = travel_area.get(pre_area, 0) + travel_minutes
-              movements["persona"][persona_name] = {}
-              movements["persona"][persona_name]["movement"] = next_tile
+              chat_payload = persona.scratch.chat
               self._record_runtime_context(
                 phase="movement_payload_build",
                 persona_name=persona_name,
@@ -2375,12 +2495,14 @@ class ReverieServer:
                 tile_entry,
                 next_tile,
               )
-              movements["persona"][persona_name]["movement_path"] = movement_path
-              movements["persona"][persona_name]["path_length"] = max(0, len(movement_path) - 1)
-              movements["persona"][persona_name]["pronunciatio"] = pronunciatio
-              movements["persona"][persona_name]["description"] = description
-              movements["persona"][persona_name]["chat"] = (persona
-                                                            .scratch.chat)
+              movements["persona"][persona_name] = _build_movement_persona_payload(
+                persona=persona,
+                movement_tile=next_tile,
+                movement_path=movement_path,
+                pronunciatio=pronunciatio,
+                description=description,
+                chat_payload=chat_payload,
+              )
 
             # Fix orphaned patients, age global queue, boost overdue patients,
             # triage timeouts, and process scheduled preloaded patient departures
@@ -2402,13 +2524,14 @@ class ReverieServer:
                                                                persona_loc=random.choice(list(self.maze.address_tiles["<spawn_loc>exit"])))
 
               # Add to this steps movement dict so that frontend can see it
-              movements["persona"][new_patient.name] = {}
-              movements["persona"][new_patient.name]["movement"] = curr_tile
-              movements["persona"][new_patient.name]["movement_path"] = [[curr_tile[0], curr_tile[1]]]
-              movements["persona"][new_patient.name]["path_length"] = 0
-              movements["persona"][new_patient.name]["pronunciatio"] = ""
-              movements["persona"][new_patient.name]["description"] = ""
-              movements["persona"][new_patient.name]["chat"] = (new_patient.scratch.chat)
+              movements["persona"][new_patient.name] = _build_movement_persona_payload(
+                persona=new_patient,
+                movement_tile=curr_tile,
+                movement_path=[[curr_tile[0], curr_tile[1]]],
+                pronunciatio="",
+                description="",
+                chat_payload=new_patient.scratch.chat,
+              )
 
               new_patient.scratch.ICD = self.symptoms["ICD-10-CA"][symptoms_index]
               new_patient.scratch.CTAS = int(self.symptoms["CTAS"][symptoms_index])
@@ -2482,12 +2605,44 @@ class ReverieServer:
                 latest_movement_step=self.step,
               )
               _atomic_write_json(curr_move_file, movements)
-              _write_runtime_trace(
+              trace_payload = _write_runtime_trace(
                 self.runtime_trace_path,
                 backend_movement_max_step=self.step,
                 curr_step=self.step,
                 blocked_reason="movement_available",
               )
+              if trace_payload.get("run_id"):
+                self.run_id = trace_payload.get("run_id")
+              for persona_name, movement_info in movements["persona"].items():
+                provenance = movement_info.get("dialogue_provenance")
+                if not isinstance(provenance, dict) or not provenance.get("chat_present"):
+                  continue
+                chat_payload = movement_info.get("chat")
+                participants = []
+                if isinstance(chat_payload, list):
+                  for turn in chat_payload:
+                    if not isinstance(turn, list) or not turn:
+                      continue
+                    speaker = str(turn[0]).strip()
+                    if speaker and speaker not in participants:
+                      participants.append(speaker)
+                record = {
+                  "run_id": self.run_id,
+                  "step": self.step,
+                  "persona": persona_name,
+                  "participants": participants,
+                  "chat": chat_payload,
+                  "source_type": provenance.get("source_type"),
+                  "llm_mode": provenance.get("llm_mode"),
+                  "generator": provenance.get("generator"),
+                  "prompt_template_path": provenance.get("prompt_template_path"),
+                  "summary_template_path": provenance.get("summary_template_path"),
+                  "fallback_used": bool(provenance.get("fallback_used", False)),
+                  "fallback_reason": provenance.get("fallback_reason"),
+                  "local_library_paths": provenance.get("local_library_paths") if isinstance(provenance.get("local_library_paths"), list) else [],
+                  "linked_movement_file": f"movement/{self.step}.json",
+                }
+                _append_dialogue_trace_record(self.dialogue_trace_path, record)
 
             # After this cycle, the world takes one step forward, and the
             # current time moves by <sec_per_step> amount.

@@ -32,11 +32,27 @@ class TestFrontendDebugContracts(TestCase):
                 {
                     "persona": {
                         "Patient 1": {
+                            "schema_version": "persona_movement_v2",
+                            "role": "Patient",
+                            "role_key": "patient",
+                            "badge": "PT",
+                            "role_source": "backend_explicit_role_map_v1",
                             "movement": [1, 2],
                             "movement_path": [[1, 2]],
                             "description": "waiting@triage queue",
                             "chat": None,
                             "pronunciatio": "",
+                            "dialogue_provenance": {
+                                "chat_present": False,
+                                "source_type": "none",
+                                "llm_mode": "local_only",
+                                "generator": "agent_chat_v2",
+                                "prompt_template_path": "persona/prompt_template/ED/v3_ChatGPT/Patient/iterative_convo_v1.txt",
+                                "summary_template_path": "persona/prompt_template/ED/v3_ChatGPT/Patient/summarize_conversation_v1.txt",
+                                "fallback_used": False,
+                                "fallback_reason": None,
+                                "local_library_paths": [],
+                            },
                         }
                     },
                     "meta": {"curr_time": "Apr 20, 2026, 12:00:00"},
@@ -87,6 +103,8 @@ class TestFrontendDebugContracts(TestCase):
         self.assertContains(response, "avatarKey")
         self.assertContains(response, "spriteKey")
         self.assertContains(response, "badgeTag")
+        self.assertContains(response, "role_key")
+        self.assertContains(response, "panel_chat_source__")
         self.assertContains(response, "backendHealth")
         self.assertContains(response, "queueLength")
         self.assertContains(response, "currentTargetTile")

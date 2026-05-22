@@ -653,6 +653,7 @@ def _reset_runtime_state_for_new_run(sim_code: str, *, requested_seed=None) -> d
     for stale_file in (
         Path(_storage_path(sim_code, "sim_status.json")),
         Path(_storage_path(sim_code, "runtime_trace.json")),
+        Path(_storage_path(sim_code, "dialogue_trace.jsonl")),
         Path(_temp_path("curr_step.json")),
     ):
         try:

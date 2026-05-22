@@ -2959,11 +2959,35 @@ def run_gpt_generate_iterative_chat_utt(maze, init_persona, target_persona, retr
   output = ChatGPT_safe_generate_response_OLD(prompt, 3, fail_safe,
                         __chat_func_validate, __chat_func_clean_up, verbose)
   print (output)
+  llm_mode = "remote_only"
+  if llm_local_only_mode():
+    llm_mode = "local_only"
+  elif llm_hybrid_mode():
+    llm_mode = "hybrid"
+  fallback_used = bool(output == fail_safe)
+  fallback_reason = None
+  source_type = "agent_chat_v2_iterative"
+  if fallback_used:
+    source_type = "local_fail_safe" if llm_mode == "local_only" else "rule_based"
+    fallback_reason = "llm_local_only_short_circuit" if llm_mode == "local_only" else "iterative_chat_generation_failed"
+  provenance = {
+    "source_type": source_type,
+    "llm_mode": llm_mode,
+    "generator": "agent_chat_v2",
+    "prompt_template_path": prompt_template,
+    "summary_template_path": f"persona/prompt_template/ED/v3_ChatGPT/{init_persona.role}/summarize_conversation_v1.txt",
+    "fallback_used": fallback_used,
+    "fallback_reason": fallback_reason,
+    "local_library_paths": [
+      prompt_template,
+      f"persona/prompt_template/ED/v3_ChatGPT/{init_persona.role}/summarize_conversation_v1.txt",
+    ],
+  }
   
   gpt_param = {"engine": "gpt-3.5-turbo", "max_tokens": 50, 
                "temperature": 0, "top_p": 1, "stream": False,
                "frequency_penalty": 0, "presence_penalty": 0, "stop": None}
-  return output, [output, prompt, gpt_param, prompt_input, fail_safe]
+  return output, [output, prompt, gpt_param, prompt_input, fail_safe], provenance
 
 
 

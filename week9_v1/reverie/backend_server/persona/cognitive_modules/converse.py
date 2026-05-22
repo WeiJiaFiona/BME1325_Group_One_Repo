@@ -109,25 +109,76 @@ def generate_one_utterance(maze, init_persona, target_persona, retrieved, curr_c
               f"is initiating a conversation with " +
               f"{target_persona.scratch.name}.")
 
-  x = run_gpt_generate_iterative_chat_utt(maze, init_persona, target_persona, retrieved, curr_context, curr_chat)[0]
+  result = run_gpt_generate_iterative_chat_utt(maze, init_persona, target_persona, retrieved, curr_context, curr_chat)
+  x = result[0]
+  provenance = result[2] if len(result) > 2 and isinstance(result[2], dict) else {}
+  return x["utterance"], x["end"], provenance
 
-  return x["utterance"], x["end"]
+
+def _default_dialogue_provenance(role_name):
+  prompt_template_path = f"persona/prompt_template/ED/v3_ChatGPT/{role_name}/iterative_convo_v1.txt"
+  summary_template_path = f"persona/prompt_template/ED/v3_ChatGPT/{role_name}/summarize_conversation_v1.txt"
+  llm_mode = "remote_only"
+  if llm_local_only_mode():
+    llm_mode = "local_only"
+  elif llm_hybrid_mode():
+    llm_mode = "hybrid"
+  return {
+    "source_type": "agent_chat_v2_iterative",
+    "llm_mode": llm_mode,
+    "generator": "agent_chat_v2",
+    "prompt_template_path": prompt_template_path,
+    "summary_template_path": summary_template_path,
+    "fallback_used": False,
+    "fallback_reason": None,
+    "local_library_paths": [prompt_template_path, summary_template_path],
+  }
+
+
+def _merge_turn_provenance(turn_provenance, role_name):
+  merged = _default_dialogue_provenance(role_name)
+  for entry in turn_provenance:
+    if not isinstance(entry, dict):
+      continue
+    if entry.get("source_type") == "local_fail_safe":
+      merged["source_type"] = "local_fail_safe"
+    llm_mode = str(entry.get("llm_mode") or "").strip().lower()
+    if llm_mode in {"local_only", "hybrid", "remote_only"}:
+      merged["llm_mode"] = llm_mode
+    prompt_path = str(entry.get("prompt_template_path") or "").strip()
+    if prompt_path:
+      merged["prompt_template_path"] = prompt_path
+    summary_path = str(entry.get("summary_template_path") or "").strip()
+    if summary_path:
+      merged["summary_template_path"] = summary_path
+    if entry.get("fallback_used"):
+      merged["fallback_used"] = True
+      merged["fallback_reason"] = entry.get("fallback_reason")
+  merged["local_library_paths"] = [
+    merged["prompt_template_path"],
+    merged["summary_template_path"],
+  ]
+  return merged
 
 def agent_chat_v2(maze, init_persona, target_persona):
   curr_chat = []
   retrieved = None
+  turn_provenance = []
 
   # Single round: one utterance per speaker (conversations are flavor-only)
   # --- init_persona speaks ---
-  utt, end = generate_one_utterance(maze, init_persona, target_persona, retrieved, curr_chat)
+  utt, end, provenance = generate_one_utterance(maze, init_persona, target_persona, retrieved, curr_chat)
+  turn_provenance.append(provenance)
   curr_chat += [[init_persona.scratch.name, utt]]
 
   if not end:
     # --- target_persona speaks ---
-    utt, end = generate_one_utterance(maze, target_persona, init_persona, retrieved, curr_chat)
+    utt, end, provenance = generate_one_utterance(maze, target_persona, init_persona, retrieved, curr_chat)
+    turn_provenance.append(provenance)
     curr_chat += [[target_persona.scratch.name, utt]]
 
-  return curr_chat
+  merged_provenance = _merge_turn_provenance(turn_provenance, str(init_persona.role))
+  return curr_chat, merged_provenance
 
 
 

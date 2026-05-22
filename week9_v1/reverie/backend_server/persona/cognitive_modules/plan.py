@@ -279,7 +279,7 @@ def generate_convo(maze, init_persona, target_persona):
 
   # convo = run_gpt_prompt_create_conversation(init_persona, target_persona, curr_loc)[0]
   # convo = agent_chat_v1(maze, init_persona, target_persona)
-  convo = agent_chat_v2(maze, init_persona, target_persona)
+  convo, dialogue_provenance = agent_chat_v2(maze, init_persona, target_persona)
   all_utt = ""
 
   for row in convo: 
@@ -290,7 +290,7 @@ def generate_convo(maze, init_persona, target_persona):
   convo_length = math.ceil(int(len(all_utt)/8) / 45)
 
   if debug: print ("GNS FUNCTION: <generate_convo>")
-  return convo, convo_length
+  return convo, convo_length, dialogue_provenance
 
 
 def generate_convo_summary(persona, convo):
@@ -875,7 +875,7 @@ def _chat_react(maze, persona, focused_event, reaction_mode, personas):
   curr_personas = [init_persona, target_persona]
 
   # Actually creating the conversation here. 
-  convo, duration_min = generate_convo(maze, init_persona, target_persona)
+  convo, duration_min, dialogue_provenance = generate_convo(maze, init_persona, target_persona)
   convo_summary = generate_convo_summary(init_persona, convo)
   
   # Each persona in convosation has different reaction depending on if it needs to be scripted
@@ -916,6 +916,7 @@ def _chat_react(maze, persona, focused_event, reaction_mode, personas):
       act_address, act_event, chatting_with, convo, chatting_with_buffer, chatting_end_time,
       act_pronunciatio, act_obj_description, act_obj_pronunciatio, 
       act_obj_event, act_start_time)
+    setattr(p, "runtime_dialogue_provenance", dict(dialogue_provenance or {}))
 
 
 def _wait_react(persona, reaction_mode): 

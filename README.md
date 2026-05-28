@@ -1,36 +1,71 @@
-# Week 9: ED Simulation (Auto + User + HIS)
+## Week12 说明
 
-This directory contains a runnable ED simulation system with:
-- **Auto mode**: multi-patient simulation driven by `reverie/backend_server/`.
-- **User mode**: interactive "one patient under user control" flow driven by `app_core/app/`.
-- **HIS (SQLite dev backend)**: both modes persist structured encounter records.
-- **Django + Phaser UI**: the primary UI entrypoint under `environment/frontend_server/`.
+### （1）上周内容回顾（Week10）
 
-## What Was Improved This Week
+上周核心目标是把系统从“能跑”推进到“稳定可解释可追踪”。对应结果如下：
 
-### Frontend / UI Runtime Sync
-- Stabilized **UI runtime sync** so the Phaser map playback does not stall when pointer/status frames drift.
-- Added **backend health checks** and **stale runtime self-heal** logic during `/start_backend/...` startup and polling.
-- Improved robustness around temp-storage command consumption and runtime pointers (`curr_step.json`, `sim_status.json`, movement/environment frames).
+1. 前端 / UI Runtime Sync 稳定化  
+   - 修复 Phaser 播放链路中 pointer 与 status step 漂移导致的停帧。  
+   - 在 `/start_backend/...` 启动与轮询中加入 backend health 检测与 stale runtime 自愈。  
+   - 提高 `curr_step.json`、`sim_status.json`、`movement/environment` 桥接文件消费鲁棒性。
 
-### Backend: Auto/User Fusion + Deterministic Control
-- Enabled **auto runtime hosting user interaction**:
-  - Start backend with `EDSIM_MODE=auto` and still open the UI with `?ui_mode=user`.
-  - A user-controlled patient can be injected into the auto world via the existing command bridge.
-- Preserved ownership boundaries:
-  - Auto state machine remains rule-driven.
-  - User mode enables **doctor LLM + doctor-only RAG** only for the user patient during the doctor encounter.
+2. 后端 Auto/User 融合与确定性控制  
+   - 支持 `EDSIM_MODE=auto` 运行时同时打开 `?ui_mode=user` 交互。  
+   - 通过既有 command bridge 将 user-patient 注入 auto 世界。  
+   - 保持边界：auto 状态机仍规则驱动；user 仅在 doctor encounter 使用 doctor LLM + doctor-only RAG。
 
-### HIS: "Write Everything" Baseline
-- Both auto-mode and user-mode flows write to HIS via `sqlite_dev` storage.
-- HIS internal IDs are contract-aligned:
-  - `patient_id`: `P-xxxxxxxx` (lowercase hex)
-  - `encounter_id`: `E-YYYYMMDDHHmmss-xxxx`
-- Public-facing legacy IDs (e.g. `enc-...`, `Patient 1`) are retained in `encounters.metadata.public_encounter_id` (mapping only).
+3. HIS “Write Everything” 基线  
+   - auto/user 两种流程均写入 `sqlite_dev` HIS。  
+   - 内部 ID 对齐：  
+     - `patient_id`: `P-xxxxxxxx`（小写十六进制）  
+     - `encounter_id`: `E-YYYYMMDDHHmmss-xxxx`  
+   - 旧公开 ID（如 `enc-...`、`Patient 1`）保留在 `encounters.metadata.public_encounter_id` 作为映射字段。
 
-### Security / Secrets Hygiene
-- Secrets are no longer stored in repo JSON configs.
-- API keys are expected to be provided via environment variables loaded from `.env`.
+4. 安全与密钥治理  
+   - 代码库不再存储密钥。  
+   - API Key 统一走 `.env` 注入。
+
+### （2）本周完成任务（Week12）
+
+本周重点是“结构化可追踪”与“前后端闭环证据化”。
+
+1. 运行态隔离 + 可复现实验机制  
+   - 新 run 会重置关键运行态文件，避免旧 movement/environment 回放污染。  
+   - 运行期 trace 中持续记录 run 维度关键信号（含 run_id / step / lag / blocked_reason）。
+
+2. 前后端数据协议修复（movement ↔ environment）  
+   - `movement` 明确为“后端给前端的动作剧本”。  
+   - `environment` 明确为“前端演完后的执行结果回写”。  
+   - 补齐 step 契约检查脚本，定位“后端已产出 vs 前端是否已消费/回写”。
+
+3. 系统可观测性（Observability）增强  
+   - 运行态从“黑盒”转为可检查：runtime trace、step contract、movement/environment 文件三套证据可交叉验证。  
+   - 增加对 lag 与阻塞原因的可解释输出，支持 demo 场景定位。
+
+4. Dashboard 指标论证能力  
+   - Dashboard 不只是 UI 展示，而是把后端状态机、队列系统、资源占用映射为可解释指标：  
+     - Patient State Distribution：患者处于哪个流程状态。  
+     - Zone Occupancy：各区当前占用与容量。  
+     - Queue Sizes：分诊、床旁护士、医生全局、Lab/Imaging 等待队列长度。  
+     - Nurse Utilization：护士工作类型分布（Monitoring/Transferring/Resting/Available）。  
+     - Doctor Load：各医生当前挂载患者/任务负载。  
+   - 结合地图 movement 与 environment 回写，可解释“为什么某角色移动/停留”以及“当前瓶颈在哪”。
+
+### （3）下一步优化目标
+
+1. 系统层 step 设计（长时序）  
+   - 目标：缩小 `run 100` 逻辑推进与前端渲染体感之间的差距。  
+   - 方向：细化 step 粒度与播放节奏控制，让长时间线既真实又流畅可读。
+
+2. 前端人物徘徊行为解释与优化  
+   - 目标：减少“看起来无意义来回走”带来的误判。  
+   - 方向：把 idle rounding / standing by / waiting 状态在 UI 侧显式化，并与 movement_path、description、scratch state 一致呈现。
+
+3. 患者初始到达机制优化  
+   - 目标：从“碎片化到达”改进为可配置、可论证的到达模式。  
+   - 方向：先梳理 arrival policy（normal/surge/burst 与 CTAS 结构），再优化 auto mode 初始化参数，使资源瓶颈与系统运转更清晰可见。
+
+---
 
 ## Removed / Pruned (Not Required for Running)
 

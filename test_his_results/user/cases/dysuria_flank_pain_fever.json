@@ -1,0 +1,40 @@
+{
+  "case_id": "dysuria_flank_pain_fever",
+  "complaint_family": "dysuria",
+  "language": "zh",
+  "patient_profile": {
+    "age": 29,
+    "sex": "F"
+  },
+  "chief_complaint": "尿痛尿频",
+  "initial_patient_message": "我尿尿很痛而且很频繁，今天开始右侧腰部也疼，还有点发烧。",
+  "expected_questions": [
+    {
+      "slot": "lower_urinary_symptoms",
+      "must_cover": true,
+      "patient_answer": "尿频尿急，尿痛明显。"
+    },
+    {
+      "slot": "flank_pain",
+      "must_cover": true,
+      "patient_answer": "右侧腰部酸痛，敲一敲更痛。"
+    },
+    {
+      "slot": "pregnancy",
+      "must_cover": true,
+      "patient_answer": "没有怀孕。"
+    },
+    {
+      "slot": "sepsis_redflags",
+      "must_cover": false,
+      "patient_answer": "没有意识模糊，也没有持续低血压。"
+    }
+  ],
+  "doctor_expected_behavior": {
+    "rag_should_help": [
+      "解释尿检/培养与是否需要静脉抗生素",
+      "解释肾盂肾炎风险信号"
+    ]
+  }
+}
+

@@ -1,0 +1,40 @@
+{
+  "case_id": "fever_cough_sob",
+  "complaint_family": "fever",
+  "language": "zh",
+  "patient_profile": {
+    "age": 35,
+    "sex": "F"
+  },
+  "chief_complaint": "发烧咳嗽",
+  "initial_patient_message": "我发烧两天了，最高38.8度，咳嗽有痰，走路有点喘。",
+  "expected_questions": [
+    {
+      "slot": "duration",
+      "must_cover": true,
+      "patient_answer": "两天了。"
+    },
+    {
+      "slot": "resp_symptoms",
+      "must_cover": true,
+      "patient_answer": "有咳嗽咳痰，胸口有点闷。"
+    },
+    {
+      "slot": "immunocompromised",
+      "must_cover": false,
+      "patient_answer": "没有免疫疾病，也没有长期用激素。"
+    },
+    {
+      "slot": "meningitis_rash",
+      "must_cover": false,
+      "patient_answer": "没有皮疹，也没有脖子僵硬。"
+    }
+  ],
+  "doctor_expected_behavior": {
+    "rag_should_help": [
+      "解释肺炎/流感/COVID等鉴别与检查（例如血氧、胸片）",
+      "给出患者可理解的风险说明"
+    ]
+  }
+}
+

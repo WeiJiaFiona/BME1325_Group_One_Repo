@@ -1,0 +1,40 @@
+{
+  "case_id": "dizziness_presyncope_palpitations",
+  "complaint_family": "dizziness",
+  "language": "zh",
+  "patient_profile": {
+    "age": 68,
+    "sex": "M"
+  },
+  "chief_complaint": "头晕要晕倒",
+  "initial_patient_message": "我这两天老是头晕，站起来就发黑，感觉要晕倒，心跳也有点乱。",
+  "expected_questions": [
+    {
+      "slot": "vertigo_vs_presyncope",
+      "must_cover": true,
+      "patient_answer": "不是天旋地转，更像眼前发黑、要晕过去。"
+    },
+    {
+      "slot": "syncope",
+      "must_cover": true,
+      "patient_answer": "没有完全晕倒，但差点摔倒。"
+    },
+    {
+      "slot": "chest_pain_sob",
+      "must_cover": true,
+      "patient_answer": "没有胸痛，但有点气短。"
+    },
+    {
+      "slot": "dehydration_bleeding",
+      "must_cover": false,
+      "patient_answer": "最近吃喝少一点，但没有便血或黑便。"
+    }
+  ],
+  "doctor_expected_behavior": {
+    "rag_should_help": [
+      "解释可能与心律失常/低血压相关，需要心电图与生命体征评估",
+      "解释危险信号与何时需要立即处理"
+    ]
+  }
+}
+

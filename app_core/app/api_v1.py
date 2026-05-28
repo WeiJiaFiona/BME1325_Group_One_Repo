@@ -1724,6 +1724,14 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
             primary_pid = str(retrieval_result.get("primary_protocol_id", "")).strip()
             kb_reg = registry_map()
             complaint_id = primary_pid if primary_pid in kb_reg else ""
+            if not complaint_id:
+                normalized = retrieval_result.get("normalized_complaints", []) or []
+                if isinstance(normalized, list):
+                    for item in normalized:
+                        cid = str(item or "").strip()
+                        if cid and cid in kb_reg:
+                            complaint_id = cid
+                            break
             if complaint_id and next_target:
                 assess = session.get("shared_memory", {}).get("doctor_assessment", {}) if isinstance(session.get("shared_memory", {}), dict) else {}
                 asked_ids = list((assess.get("asked_question_ids", []) or []))

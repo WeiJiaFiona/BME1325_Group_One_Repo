@@ -596,6 +596,15 @@ def home(request):
         render_step = step if step in file_count else latest_environment_step
         playback_step = step
 
+    # Fail-open: if the chosen render_step environment snapshot is missing,
+    # rewind to the nearest available environment step so the UI can load.
+    # This can happen when movement steps advance faster than environment
+    # snapshots (e.g., certain headless runs).
+    if render_step not in file_count:
+        render_step = latest_environment_step
+        playback_step = render_step + 1 if effective_ui_mode == "auto" else render_step
+        step = render_step
+
     curr_json = _storage_path(sim_code, "environment", f"{str(render_step)}.json")
     with open(curr_json) as json_file:  
         persona_init_pos_dict = json.load(json_file)

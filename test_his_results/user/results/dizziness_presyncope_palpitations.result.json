@@ -1,0 +1,232 @@
+{
+  "case_id": "dizziness_presyncope_palpitations",
+  "complaint_family": "dizziness",
+  "ran_at": "2026-05-22T08:32:59.368262+00:00",
+  "llm_rag_runtime": {
+    "llm_enabled": true,
+    "rag_registry_count": 8,
+    "rag_registry_keys": [
+      "abdominal_pain",
+      "back_pain",
+      "dizziness",
+      "dysuria",
+      "fever",
+      "headache",
+      "nausea_vomiting",
+      "palpitations"
+    ],
+    "env_ENABLE_LLM_AGENTS": "",
+    "env_EDSIM_MODEL": "GPT-5.2",
+    "env_EDSIM_MODEL_ENDPOINT": "https://genaiapi.shanghaitech.edu.cn/api/v1/start"
+  },
+  "final_phase": "DOCTOR_CALLED",
+  "encounter_id": "enc-bb033aea8f",
+  "rag_primary_protocol_id": "trauma",
+  "rag_assessment_snapshot": {
+    "active_protocol_ids": [
+      "trauma"
+    ],
+    "normalized_complaints": [
+      "trauma"
+    ],
+    "missing_critical_slots": [
+      "pain_score",
+      "worsening_pain",
+      "breathing_difficulty"
+    ],
+    "filled_slots": {
+      "duration": "unknown",
+      "syncope": true
+    },
+    "planner_trace_tail": [
+      {
+        "ts": "2026-05-22T08:32:53.898914+00:00",
+        "primary_protocol_id": "trauma",
+        "secondary_protocol_ids": [],
+        "retrieval_score": 3.3,
+        "evidence_refs": [
+          {
+            "protocol_id": "trauma",
+            "section": "keywords+rules",
+            "score": 3.3,
+            "matched": [
+              "normalized:trauma",
+              "外伤"
+            ]
+          }
+        ],
+        "llm_plan_raw": "",
+        "validator_result": "pass",
+        "warning_codes": [],
+        "override_applied": false,
+        "fallback_used": false
+      },
+      {
+        "ts": "2026-05-22T08:32:56.000035+00:00",
+        "primary_protocol_id": "trauma",
+        "secondary_protocol_ids": [],
+        "retrieval_score": 3.3,
+        "evidence_refs": [
+          {
+            "protocol_id": "trauma",
+            "section": "keywords+rules",
+            "score": 3.3,
+            "matched": [
+              "normalized:trauma",
+              "外伤"
+            ]
+          }
+        ],
+        "llm_plan_raw": "",
+        "validator_result": "pass",
+        "warning_codes": [],
+        "override_applied": false,
+        "fallback_used": false
+      },
+      {
+        "ts": "2026-05-22T08:32:58.220626+00:00",
+        "primary_protocol_id": "trauma",
+        "secondary_protocol_ids": [],
+        "retrieval_score": 3.3,
+        "evidence_refs": [
+          {
+            "protocol_id": "trauma",
+            "section": "keywords+rules",
+            "score": 3.3,
+            "matched": [
+              "normalized:trauma",
+              "外伤"
+            ]
+          }
+        ],
+        "llm_plan_raw": "",
+        "validator_result": "pass",
+        "warning_codes": [],
+        "override_applied": false,
+        "fallback_used": false
+      }
+    ]
+  },
+  "transcript": [
+    {
+      "role": "PATIENT",
+      "text": "我这两天老是头晕，站起来就发黑，感觉要晕倒，心跳也有点乱。"
+    },
+    {
+      "role": "calling_nurse",
+      "text": "I am the calling nurse. I will measure your vitals now and move you to triage immediately."
+    },
+    {
+      "role": "calling_nurse",
+      "text": "Vitals measured: SpO2 97, SBP 105. Sending you to triage now."
+    },
+    {
+      "role": "triage_nurse",
+      "text": "Triage completed: acuity C (CTAS 3)."
+    },
+    {
+      "role": "calling_nurse",
+      "text": "Patient 1, your number is called. Please proceed to the doctor now."
+    },
+    {
+      "role": "doctor",
+      "text": "I reviewed your triage note: main complaint is 我这两天老是头晕，站起来就发黑，感觉要晕倒，心跳也有点乱。 (acuity C). What changed most since arrival?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "没有完全晕倒，但差点摔倒。"
+    },
+    {
+      "role": "doctor",
+      "text": "受伤是在什么时候发生的？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "不是天旋地转，更像眼前发黑、要晕过去。"
+    },
+    {
+      "role": "doctor",
+      "text": "症状是从什么时候开始的？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "没有完全晕倒，但差点摔倒。"
+    },
+    {
+      "role": "doctor",
+      "text": "现在疼痛评分 0-10 分大约是多少？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "没有胸痛，但有点气短。"
+    },
+    {
+      "role": "doctor",
+      "text": "症状是从什么时候开始的？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "最近吃喝少一点，但没有便血或黑便。"
+    },
+    {
+      "role": "doctor",
+      "text": "I still need the timeline: when exactly did it start (for example, yesterday morning or 2 days ago)?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "好的。我可以再补充：症状在持续，没有明显外伤史，也没有其他特别情况。"
+    },
+    {
+      "role": "doctor",
+      "text": "疼痛是否持续加重？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "好的。我可以再补充：症状在持续，没有明显外伤史，也没有其他特别情况。"
+    },
+    {
+      "role": "doctor",
+      "text": "现在有呼吸困难吗？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "没有胸痛，但有点气短。"
+    },
+    {
+      "role": "doctor",
+      "text": "When exactly did this pain start?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "好的。我可以再补充：症状在持续，没有明显外伤史，也没有其他特别情况。"
+    },
+    {
+      "role": "doctor",
+      "text": "受伤是在什么时候发生的？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "好的。我可以再补充：症状在持续，没有明显外伤史，也没有其他特别情况。"
+    },
+    {
+      "role": "doctor",
+      "text": "What is your current pain score from 0 to 10?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "好的。我可以再补充：症状在持续，没有明显外伤史，也没有其他特别情况。"
+    },
+    {
+      "role": "doctor",
+      "text": "现在疼痛评分 0-10 分大约是多少？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "好的。我可以再补充：症状在持续，没有明显外伤史，也没有其他特别情况。"
+    },
+    {
+      "role": "doctor",
+      "text": "Is the pain getting worse compared with yesterday?"
+    }
+  ]
+}

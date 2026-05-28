@@ -2389,6 +2389,15 @@ class ReverieServer:
             curr_move_file = f"{sim_folder}/movement/{self.step}.json"
             _atomic_write_json(curr_move_file, movements)
 
+          # Keep environment snapshots in sync with movement for frontend playback.
+          # Without this, the UI can crash on /simulator_home when it tries to
+          # load environment/{render_step}.json for a step that only has movement.
+          env_dir = f"{sim_folder}/environment"
+          env_data = {}
+          for p_name, tile in self.personas_tile.items():
+            env_data[p_name] = {"maze": "Emergency Department", "x": tile[0], "y": tile[1]}
+          _atomic_write_json(f"{env_dir}/{self.step}.json", env_data)
+
           # After this cycle, the world takes one step forward, and the
           # current time moves by <sec_per_step> amount.
           self.step += 1

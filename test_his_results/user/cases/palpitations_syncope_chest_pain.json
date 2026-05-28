@@ -1,0 +1,40 @@
+{
+  "case_id": "palpitations_syncope_chest_pain",
+  "complaint_family": "palpitations",
+  "language": "zh",
+  "patient_profile": {
+    "age": 41,
+    "sex": "F"
+  },
+  "chief_complaint": "心悸",
+  "initial_patient_message": "我突然心跳很快很乱，胸口也有点闷，刚才站起来差点晕倒。",
+  "expected_questions": [
+    {
+      "slot": "onset_time",
+      "must_cover": true,
+      "patient_answer": "大概半小时前突然开始的。"
+    },
+    {
+      "slot": "syncope",
+      "must_cover": true,
+      "patient_answer": "没有完全晕过去，但眼前发黑差点倒。"
+    },
+    {
+      "slot": "chest_pain_sob",
+      "must_cover": true,
+      "patient_answer": "胸闷有一点，呼吸不太费力。"
+    },
+    {
+      "slot": "stimulants_thyroid",
+      "must_cover": false,
+      "patient_answer": "没有喝很多咖啡，也没有吸毒史。"
+    }
+  ],
+  "doctor_expected_behavior": {
+    "rag_should_help": [
+      "解释需要心电图、生命体征监测与危险信号",
+      "对患者提问“是否需要做检查”的问题给出可理解解释"
+    ]
+  }
+}
+

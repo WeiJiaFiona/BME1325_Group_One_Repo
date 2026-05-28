@@ -1,0 +1,191 @@
+{
+  "case_id": "headache_thunderclap_syncope",
+  "complaint_family": "headache",
+  "ran_at": "2026-05-22T08:34:32.608967+00:00",
+  "llm_rag_runtime": {
+    "llm_enabled": true,
+    "rag_registry_count": 8,
+    "rag_registry_keys": [
+      "abdominal_pain",
+      "back_pain",
+      "dizziness",
+      "dysuria",
+      "fever",
+      "headache",
+      "nausea_vomiting",
+      "palpitations"
+    ],
+    "env_ENABLE_LLM_AGENTS": "",
+    "env_EDSIM_MODEL": "GPT-5.2",
+    "env_EDSIM_MODEL_ENDPOINT": "https://genaiapi.shanghaitech.edu.cn/api/v1/start"
+  },
+  "final_phase": "DOCTOR_CALLED",
+  "encounter_id": "enc-f4fc5d95b7",
+  "rag_primary_protocol_id": "",
+  "rag_assessment_snapshot": {
+    "active_protocol_ids": [
+      ""
+    ],
+    "normalized_complaints": [],
+    "missing_critical_slots": [],
+    "filled_slots": {
+      "duration": "今天上午"
+    },
+    "planner_trace_tail": [
+      {
+        "ts": "2026-05-22T08:34:27.060546+00:00",
+        "primary_protocol_id": "",
+        "secondary_protocol_ids": [],
+        "retrieval_score": 0.0,
+        "evidence_refs": [],
+        "llm_plan_raw": "",
+        "validator_result": "pass",
+        "warning_codes": [],
+        "override_applied": false,
+        "fallback_used": true
+      },
+      {
+        "ts": "2026-05-22T08:34:29.299932+00:00",
+        "primary_protocol_id": "",
+        "secondary_protocol_ids": [],
+        "retrieval_score": 0.0,
+        "evidence_refs": [],
+        "llm_plan_raw": "",
+        "validator_result": "pass",
+        "warning_codes": [],
+        "override_applied": false,
+        "fallback_used": true
+      },
+      {
+        "ts": "2026-05-22T08:34:31.499296+00:00",
+        "primary_protocol_id": "",
+        "secondary_protocol_ids": [],
+        "retrieval_score": 0.0,
+        "evidence_refs": [],
+        "llm_plan_raw": "",
+        "validator_result": "pass",
+        "warning_codes": [],
+        "override_applied": false,
+        "fallback_used": true
+      }
+    ]
+  },
+  "transcript": [
+    {
+      "role": "PATIENT",
+      "text": "你好，我头突然特别疼，9/10，刚刚开始的，还恶心想吐，刚才还晕过去了一下。"
+    },
+    {
+      "role": "calling_nurse",
+      "text": "I am the calling nurse. I will measure your vitals now and move you to triage immediately."
+    },
+    {
+      "role": "calling_nurse",
+      "text": "Vitals measured: SpO2 97, SBP 122. Sending you to triage now."
+    },
+    {
+      "role": "triage_nurse",
+      "text": "Triage completed: acuity B (CTAS 2)."
+    },
+    {
+      "role": "doctor",
+      "text": "I reviewed your triage note: main complaint is 你好，我头突然特别疼，9/10，刚刚开始的，还恶心想吐，刚才还晕过去了一下。 (acuity B). What changed most since arrival?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "今天上午10点左右突然开始。"
+    },
+    {
+      "role": "doctor",
+      "text": "症状是从什么时候开始的？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "今天上午10点左右突然开始。"
+    },
+    {
+      "role": "doctor",
+      "text": "I still need the timeline: when exactly did it start (for example, yesterday morning or 2 days ago)?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "今天上午10点左右突然开始。"
+    },
+    {
+      "role": "doctor",
+      "text": "症状是从什么时候开始的？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "今天上午10点左右突然开始。"
+    },
+    {
+      "role": "doctor",
+      "text": "I still need the timeline: when exactly did it start (for example, yesterday morning or 2 days ago)?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "今天上午10点左右突然开始。"
+    },
+    {
+      "role": "doctor",
+      "text": "症状是从什么时候开始的？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "今天上午10点左右突然开始。"
+    },
+    {
+      "role": "doctor",
+      "text": "I still need the timeline: when exactly did it start (for example, yesterday morning or 2 days ago)?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "今天上午10点左右突然开始。"
+    },
+    {
+      "role": "doctor",
+      "text": "症状是从什么时候开始的？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "今天上午10点左右突然开始。"
+    },
+    {
+      "role": "doctor",
+      "text": "I still need the timeline: when exactly did it start (for example, yesterday morning or 2 days ago)?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "今天上午10点左右突然开始。"
+    },
+    {
+      "role": "doctor",
+      "text": "症状是从什么时候开始的？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "今天上午10点左右突然开始。"
+    },
+    {
+      "role": "doctor",
+      "text": "I still need the timeline: when exactly did it start (for example, yesterday morning or 2 days ago)?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "今天上午10点左右突然开始。"
+    },
+    {
+      "role": "doctor",
+      "text": "症状是从什么时候开始的？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "今天上午10点左右突然开始。"
+    },
+    {
+      "role": "doctor",
+      "text": "I still need the timeline: when exactly did it start (for example, yesterday morning or 2 days ago)?"
+    }
+  ]
+}

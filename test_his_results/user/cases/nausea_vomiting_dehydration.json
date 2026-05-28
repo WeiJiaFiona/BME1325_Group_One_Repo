@@ -1,0 +1,40 @@
+{
+  "case_id": "nausea_vomiting_dehydration",
+  "complaint_family": "nausea_vomiting",
+  "language": "zh",
+  "patient_profile": {
+    "age": 19,
+    "sex": "M"
+  },
+  "chief_complaint": "恶心呕吐",
+  "initial_patient_message": "我从凌晨开始一直恶心呕吐，吐了五六次，喝水也吐，感觉很口渴头晕。",
+  "expected_questions": [
+    {
+      "slot": "onset_time",
+      "must_cover": true,
+      "patient_answer": "今天凌晨3点左右开始。"
+    },
+    {
+      "slot": "blood_in_vomit",
+      "must_cover": false,
+      "patient_answer": "没有血，就是胃内容物。"
+    },
+    {
+      "slot": "diarrhea_abdominal_pain",
+      "must_cover": false,
+      "patient_answer": "有点肚子不舒服，但没有明显腹痛，也没有严重腹泻。"
+    },
+    {
+      "slot": "dehydration",
+      "must_cover": true,
+      "patient_answer": "尿量变少了，嘴很干。"
+    }
+  ],
+  "doctor_expected_behavior": {
+    "rag_should_help": [
+      "解释脱水风险与补液/止吐的目的",
+      "解释需要警惕的信号（血吐、持续腹痛、意识改变等）"
+    ]
+  }
+}
+

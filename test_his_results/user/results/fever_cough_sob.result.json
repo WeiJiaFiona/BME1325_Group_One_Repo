@@ -1,0 +1,256 @@
+{
+  "case_id": "fever_cough_sob",
+  "complaint_family": "fever",
+  "ran_at": "2026-05-22T08:34:05.842357+00:00",
+  "llm_rag_runtime": {
+    "llm_enabled": true,
+    "rag_registry_count": 8,
+    "rag_registry_keys": [
+      "abdominal_pain",
+      "back_pain",
+      "dizziness",
+      "dysuria",
+      "fever",
+      "headache",
+      "nausea_vomiting",
+      "palpitations"
+    ],
+    "env_ENABLE_LLM_AGENTS": "",
+    "env_EDSIM_MODEL": "GPT-5.2",
+    "env_EDSIM_MODEL_ENDPOINT": "https://genaiapi.shanghaitech.edu.cn/api/v1/start"
+  },
+  "final_phase": "DOCTOR_CALLED",
+  "encounter_id": "enc-5ba2a40956",
+  "rag_primary_protocol_id": "trauma",
+  "rag_assessment_snapshot": {
+    "active_protocol_ids": [
+      "trauma"
+    ],
+    "normalized_complaints": [
+      "trauma"
+    ],
+    "missing_critical_slots": [
+      "pain_score",
+      "worsening_pain",
+      "breathing_difficulty",
+      "syncope"
+    ],
+    "filled_slots": {
+      "duration": "unknown"
+    },
+    "planner_trace_tail": [
+      {
+        "ts": "2026-05-22T08:33:47.808259+00:00",
+        "primary_protocol_id": "trauma",
+        "secondary_protocol_ids": [],
+        "retrieval_score": 3.3,
+        "evidence_refs": [
+          {
+            "protocol_id": "trauma",
+            "section": "keywords+rules",
+            "score": 3.3,
+            "matched": [
+              "normalized:trauma",
+              "外伤"
+            ]
+          },
+          {
+            "protocol_id": "abdominal_pain",
+            "section": "keywords+rules",
+            "score": 0.8,
+            "matched": [
+              "fever"
+            ]
+          }
+        ],
+        "llm_plan_raw": "",
+        "validator_result": "pass",
+        "warning_codes": [],
+        "override_applied": false,
+        "fallback_used": false
+      },
+      {
+        "ts": "2026-05-22T08:34:02.309493+00:00",
+        "primary_protocol_id": "trauma",
+        "secondary_protocol_ids": [],
+        "retrieval_score": 3.3,
+        "evidence_refs": [
+          {
+            "protocol_id": "trauma",
+            "section": "keywords+rules",
+            "score": 3.3,
+            "matched": [
+              "normalized:trauma",
+              "外伤"
+            ]
+          },
+          {
+            "protocol_id": "abdominal_pain",
+            "section": "keywords+rules",
+            "score": 0.8,
+            "matched": [
+              "fever"
+            ]
+          }
+        ],
+        "llm_plan_raw": "",
+        "validator_result": "pass",
+        "warning_codes": [],
+        "override_applied": false,
+        "fallback_used": false
+      },
+      {
+        "ts": "2026-05-22T08:34:04.627736+00:00",
+        "primary_protocol_id": "trauma",
+        "secondary_protocol_ids": [],
+        "retrieval_score": 3.3,
+        "evidence_refs": [
+          {
+            "protocol_id": "trauma",
+            "section": "keywords+rules",
+            "score": 3.3,
+            "matched": [
+              "normalized:trauma",
+              "外伤"
+            ]
+          },
+          {
+            "protocol_id": "abdominal_pain",
+            "section": "keywords+rules",
+            "score": 0.8,
+            "matched": [
+              "fever"
+            ]
+          }
+        ],
+        "llm_plan_raw": "",
+        "validator_result": "pass",
+        "warning_codes": [],
+        "override_applied": false,
+        "fallback_used": false
+      }
+    ]
+  },
+  "transcript": [
+    {
+      "role": "PATIENT",
+      "text": "我发烧两天了，最高38.8度，咳嗽有痰，走路有点喘。"
+    },
+    {
+      "role": "calling_nurse",
+      "text": "I am the calling nurse. I will measure your vitals now and move you to triage immediately."
+    },
+    {
+      "role": "calling_nurse",
+      "text": "Vitals measured: SpO2 94, SBP 128. Sending you to triage now."
+    },
+    {
+      "role": "triage_nurse",
+      "text": "Triage completed: acuity C (CTAS 3)."
+    },
+    {
+      "role": "calling_nurse",
+      "text": "Patient 1, your number is called. Please proceed to the doctor now."
+    },
+    {
+      "role": "doctor",
+      "text": "I reviewed your triage note: main complaint is 我发烧两天了，最高38.8度，咳嗽有痰，走路有点喘。 (acuity C). What changed most since arrival?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "两天了。"
+    },
+    {
+      "role": "doctor",
+      "text": "腹痛是从什么时候开始的？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "有咳嗽咳痰，胸口有点闷。"
+    },
+    {
+      "role": "doctor",
+      "text": "Is the pain getting worse compared with yesterday?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "没有免疫疾病，也没有长期用激素。"
+    },
+    {
+      "role": "doctor",
+      "text": "疼痛是否在持续加重？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "两天了。"
+    },
+    {
+      "role": "doctor",
+      "text": "现在有发热吗？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "没有皮疹，也没有脖子僵硬。"
+    },
+    {
+      "role": "doctor",
+      "text": "腹痛是从什么时候开始的？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "好的。我可以再补充：症状在持续，没有明显外伤史，也没有其他特别情况。"
+    },
+    {
+      "role": "doctor",
+      "text": "现在疼痛评分 0-10 分大约是多少？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "好的。我可以再补充：症状在持续，没有明显外伤史，也没有其他特别情况。"
+    },
+    {
+      "role": "doctor",
+      "text": "What is your current pain score from 0 to 10?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "好的。我可以再补充：症状在持续，没有明显外伤史，也没有其他特别情况。"
+    },
+    {
+      "role": "doctor",
+      "text": "现在有呼吸困难吗？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "好的。我可以再补充：症状在持续，没有明显外伤史，也没有其他特别情况。"
+    },
+    {
+      "role": "doctor",
+      "text": "受伤后有晕厥或差点晕倒吗？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "好的。我可以再补充：症状在持续，没有明显外伤史，也没有其他特别情况。"
+    },
+    {
+      "role": "doctor",
+      "text": "Is the pain getting worse compared with yesterday?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "好的。我可以再补充：症状在持续，没有明显外伤史，也没有其他特别情况。"
+    },
+    {
+      "role": "doctor",
+      "text": "What is your current pain score from 0 to 10?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "好的。我可以再补充：症状在持续，没有明显外伤史，也没有其他特别情况。"
+    },
+    {
+      "role": "doctor",
+      "text": "Is the pain getting worse compared with yesterday?"
+    }
+  ]
+}

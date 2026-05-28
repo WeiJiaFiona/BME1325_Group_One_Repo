@@ -1,0 +1,201 @@
+{
+  "case_id": "abdominal_pain_rlq_fever",
+  "complaint_family": "abdominal_pain",
+  "ran_at": "2026-05-22T08:32:04.837474+00:00",
+  "llm_rag_runtime": {
+    "llm_enabled": true,
+    "rag_registry_count": 8,
+    "rag_registry_keys": [
+      "abdominal_pain",
+      "back_pain",
+      "dizziness",
+      "dysuria",
+      "fever",
+      "headache",
+      "nausea_vomiting",
+      "palpitations"
+    ],
+    "env_ENABLE_LLM_AGENTS": "",
+    "env_EDSIM_MODEL": "GPT-5.2",
+    "env_EDSIM_MODEL_ENDPOINT": "https://genaiapi.shanghaitech.edu.cn/api/v1/start"
+  },
+  "final_phase": "DONE",
+  "encounter_id": "enc-5264b3849b",
+  "rag_primary_protocol_id": "abdominal_pain",
+  "rag_assessment_snapshot": {
+    "active_protocol_ids": [
+      "abdominal_pain"
+    ],
+    "normalized_complaints": [],
+    "missing_critical_slots": [
+      "fever"
+    ],
+    "filled_slots": {
+      "duration": "昨晚",
+      "worsening_pain": false
+    },
+    "planner_trace_tail": [
+      {
+        "ts": "2026-05-22T08:31:59.277426+00:00",
+        "primary_protocol_id": "abdominal_pain",
+        "secondary_protocol_ids": [],
+        "retrieval_score": 0.8,
+        "evidence_refs": [
+          {
+            "protocol_id": "abdominal_pain",
+            "section": "keywords+rules",
+            "score": 0.8,
+            "matched": [
+              "fever"
+            ]
+          }
+        ],
+        "llm_plan_raw": "",
+        "validator_result": "pass",
+        "warning_codes": [],
+        "override_applied": false,
+        "fallback_used": false
+      },
+      {
+        "ts": "2026-05-22T08:32:02.459668+00:00",
+        "primary_protocol_id": "abdominal_pain",
+        "secondary_protocol_ids": [],
+        "retrieval_score": 0.8,
+        "evidence_refs": [
+          {
+            "protocol_id": "abdominal_pain",
+            "section": "keywords+rules",
+            "score": 0.8,
+            "matched": [
+              "fever"
+            ]
+          },
+          {
+            "section": "doctor_kb",
+            "chunk_type": "question",
+            "chunk_id": "5932ca3c25d808fc",
+            "complaint_id": "abdominal_pain",
+            "slot": "worsening_pain",
+            "topic": "",
+            "red_flag_id": "",
+            "score": 0.0,
+            "provenance": {
+              "source_guideline": "local ED teaching note",
+              "source_section": "Abdominal pain initial workup",
+              "curator": "BME1325 Group",
+              "review_status": "draft",
+              "effective_date": "2026-04-23",
+              "evidence_level": "expert_consensus"
+            }
+          }
+        ],
+        "llm_plan_raw": "",
+        "validator_result": "pass",
+        "warning_codes": [],
+        "override_applied": false,
+        "fallback_used": false
+      },
+      {
+        "ts": "2026-05-22T08:32:04.819143+00:00",
+        "primary_protocol_id": "abdominal_pain",
+        "secondary_protocol_ids": [],
+        "retrieval_score": 0.8,
+        "evidence_refs": [
+          {
+            "protocol_id": "abdominal_pain",
+            "section": "keywords+rules",
+            "score": 0.8,
+            "matched": [
+              "fever"
+            ]
+          },
+          {
+            "section": "doctor_kb",
+            "chunk_type": "question",
+            "chunk_id": "5932ca3c25d808fc",
+            "complaint_id": "abdominal_pain",
+            "slot": "worsening_pain",
+            "topic": "",
+            "red_flag_id": "",
+            "score": 0.0,
+            "provenance": {
+              "source_guideline": "local ED teaching note",
+              "source_section": "Abdominal pain initial workup",
+              "curator": "BME1325 Group",
+              "review_status": "draft",
+              "effective_date": "2026-04-23",
+              "evidence_level": "expert_consensus"
+            }
+          }
+        ],
+        "llm_plan_raw": "",
+        "validator_result": "pass",
+        "warning_codes": [],
+        "override_applied": false,
+        "fallback_used": false
+      }
+    ]
+  },
+  "transcript": [
+    {
+      "role": "PATIENT",
+      "text": "我肚子右下角很疼，7/10，从昨晚开始，今天更疼了，还有点发烧和恶心。"
+    },
+    {
+      "role": "calling_nurse",
+      "text": "I am the calling nurse. I will measure your vitals now and move you to triage immediately."
+    },
+    {
+      "role": "calling_nurse",
+      "text": "Vitals measured: SpO2 97, SBP 122. Sending you to triage now."
+    },
+    {
+      "role": "triage_nurse",
+      "text": "Triage completed: acuity C (CTAS 3)."
+    },
+    {
+      "role": "calling_nurse",
+      "text": "Patient 1, your number is called. Please proceed to the doctor now."
+    },
+    {
+      "role": "doctor",
+      "text": "I reviewed your triage note: main complaint is 我肚子右下角很疼，7/10，从昨晚开始，今天更疼了，还有点发烧和恶心。 (acuity C). What changed most since arrival?"
+    },
+    {
+      "role": "PATIENT",
+      "text": "昨晚9点左右开始的。"
+    },
+    {
+      "role": "doctor",
+      "text": "疼痛是否在持续加重？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "昨晚9点左右开始的。"
+    },
+    {
+      "role": "doctor",
+      "text": "现在有发热吗？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "一开始像肚脐周围不舒服，后来变成右下角更明显。"
+    },
+    {
+      "role": "doctor",
+      "text": "疼痛是否在持续加重？"
+    },
+    {
+      "role": "PATIENT",
+      "text": "我没有怀孕，最近月经正常。"
+    },
+    {
+      "role": "doctor",
+      "text": "Preliminary clinical impression: abdominal pain pattern. Key findings: onset: 昨晚; worsening_pain: negative. Current disposition plan: transfer to WARD for continued management."
+    },
+    {
+      "role": "bed_nurse",
+      "text": "Bed arrangement done. Destination: WARD, bed number WARD-BED-01, transfer latency 0 seconds."
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "case_id": "abdominal_pain_rlq_fever",
+  "complaint_family": "abdominal_pain",
+  "language": "zh",
+  "patient_profile": {
+    "age": 23,
+    "sex": "F"
+  },
+  "chief_complaint": "右下腹痛",
+  "initial_patient_message": "我肚子右下角很疼，7/10，从昨晚开始，今天更疼了，还有点发烧和恶心。",
+  "expected_questions": [
+    {
+      "slot": "onset_time",
+      "must_cover": true,
+      "patient_answer": "昨晚9点左右开始的。"
+    },
+    {
+      "slot": "location_migration",
+      "must_cover": true,
+      "patient_answer": "一开始像肚脐周围不舒服，后来变成右下角更明显。"
+    },
+    {
+      "slot": "pregnancy",
+      "must_cover": true,
+      "patient_answer": "我没有怀孕，最近月经正常。"
+    },
+    {
+      "slot": "vomiting",
+      "must_cover": false,
+      "patient_answer": "没有吐出来，就是很恶心。"
+    },
+    {
+      "slot": "gi_bleeding",
+      "must_cover": false,
+      "patient_answer": "没有黑便或血便。"
+    }
+  ],
+  "doctor_expected_behavior": {
+    "rag_should_help": [
+      "用通俗语言解释鉴别诊断与检查路径（例如验孕、血常规、超声/CT）",
+      "解释警示症状（持续加重、发热、反跳痛等）"
+    ],
+    "hard_rule_should_remain": [
+      "next_slot 不被RAG改写",
+      "disposition 仍由规则与已收集槽位决定"
+    ]
+  }
+}
+

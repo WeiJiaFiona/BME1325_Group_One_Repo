@@ -1,0 +1,40 @@
+{
+  "case_id": "back_pain_redflags",
+  "complaint_family": "back_pain",
+  "language": "zh",
+  "patient_profile": {
+    "age": 47,
+    "sex": "M"
+  },
+  "chief_complaint": "腰背痛",
+  "initial_patient_message": "我突然腰背痛得厉害，8/10，今天开始的，而且一条腿有点麻，走路发软。",
+  "expected_questions": [
+    {
+      "slot": "onset_time",
+      "must_cover": true,
+      "patient_answer": "今天上午突然开始。"
+    },
+    {
+      "slot": "neuro_deficits",
+      "must_cover": true,
+      "patient_answer": "右腿麻木、发软，但还能动。"
+    },
+    {
+      "slot": "bowel_bladder",
+      "must_cover": true,
+      "patient_answer": "目前没有尿失禁，也没有大便失禁。"
+    },
+    {
+      "slot": "fever_ivdu_cancer",
+      "must_cover": false,
+      "patient_answer": "没有发烧，也没有静脉吸毒史，也没有癌症史。"
+    }
+  ],
+  "doctor_expected_behavior": {
+    "rag_should_help": [
+      "解释为什么要问大小便功能与腿麻（提示马尾综合征风险）",
+      "解释需要尽快评估的原因"
+    ]
+  }
+}
+

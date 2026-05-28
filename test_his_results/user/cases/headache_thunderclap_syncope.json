@@ -1,0 +1,45 @@
+{
+  "case_id": "headache_thunderclap_syncope",
+  "complaint_family": "headache",
+  "language": "zh",
+  "patient_profile": {
+    "age": 54,
+    "sex": "M"
+  },
+  "chief_complaint": "突发剧烈头痛",
+  "initial_patient_message": "你好，我头突然特别疼，9/10，刚刚开始的，还恶心想吐，刚才还晕过去了一下。",
+  "expected_questions": [
+    {
+      "slot": "onset_time",
+      "must_cover": true,
+      "patient_answer": "今天上午10点左右突然开始。"
+    },
+    {
+      "slot": "neuro_deficit",
+      "must_cover": true,
+      "patient_answer": "没有一侧无力，也没有说话困难。"
+    },
+    {
+      "slot": "neck_stiffness_or_fever",
+      "must_cover": false,
+      "patient_answer": "没有发烧，也没有脖子僵硬。"
+    },
+    {
+      "slot": "trauma",
+      "must_cover": false,
+      "patient_answer": "没有外伤。"
+    }
+  ],
+  "doctor_expected_behavior": {
+    "rag_should_help": [
+      "解释为什么需要头颅CT优先排除出血/危急情况",
+      "用患者可理解的话说明危险信号与下一步检查"
+    ],
+    "hard_rule_should_remain": [
+      "next_slot 归属不变（plan_contract驱动）",
+      "safety floor 不变",
+      "disposition 不被RAG/LLM改写"
+    ]
+  }
+}
+

@@ -525,6 +525,24 @@ def _normalize_text(text: str) -> str:
     return t
 
 
+def _is_mostly_chinese(text: str) -> bool:
+    if not text:
+        return False
+    chars = [c for c in text if c.strip()]
+    if not chars:
+        return False
+    zh = sum(1 for c in chars if "\u4e00" <= c <= "\u9fff")
+    return zh / max(len(chars), 1) >= 0.2
+
+
+def _session_lang(session: Dict[str, Any], fallback_text: str = "") -> str:
+    shared = session.get("shared_memory", {}) if isinstance(session.get("shared_memory"), dict) else {}
+    lang = str(shared.get("lang", "")).strip().lower()
+    if lang in {"zh", "en"}:
+        return lang
+    return "zh" if _is_mostly_chinese(fallback_text) else "en"
+
+
 def _is_smalltalk(text: str) -> bool:
     t = _normalize_text(text).strip().lower()
     if not t:
@@ -597,6 +615,9 @@ def _extract_pain_score(text: str) -> Optional[int]:
 
 def _extract_duration(text: str) -> str:
     t = _normalize_text(text).lower()
+    m_cn_rel = re.search(r"((\d+|半)\s*(分钟|小时|天)前)", t)
+    if m_cn_rel:
+        return m_cn_rel.group(1)
     m = re.search(r"(\d+\s*(minute|minutes|min|hour|hours|day|days|小时|分钟|天))", t)
     if m:
         return m.group(1)
@@ -685,6 +706,11 @@ def _extract_red_flags(text: str) -> Dict[str, Optional[bool]]:
     elif "radiat" in t or "jaw" in t or "arm" in t or "放射痛" in t or "放射到" in t:
         out["radiating_pain"] = True
     return out
+
+
+def _explicit_worsening_negative(text: str) -> bool:
+    t = _normalize_text(text).lower()
+    return bool(re.search(r"\b(no worsening|not worsening|not worse|stable pain)\b|没有加重|未加重|不再加重|差不多", t))
 
 
 def _nurse_measured_vitals(chief_complaint: str, symptoms: List[str]) -> Dict[str, float]:
@@ -946,7 +972,13 @@ def _update_doctor_data(session: Dict[str, Any], msg: str) -> None:
     pain = pain_hint
     if pain is not None:
         data["pain_score"] = pain
+    old_flags = dict(data.get("red_flags", {}))
     flags = _extract_red_flags(msg)
+    # If patient gives mixed info in one sentence, keep both timeline and progression.
+    if "worsening_pain" in flags and flags.get("worsening_pain") is None:
+        t = _normalize_text(msg).lower()
+        if re.search(r"更重|加重|越来越", t):
+            flags["worsening_pain"] = True
     for k, v in flags.items():
         if v is not None:
             data["red_flags"][k] = v
@@ -967,6 +999,10 @@ def _update_doctor_data(session: Dict[str, Any], msg: str) -> None:
     for key in ["fever", "breathing_difficulty", "worsening_pain", "syncope", "radiating_pain"]:
         val = llm_slots.get(key)
         if isinstance(val, bool):
+            if key == "worsening_pain" and old_flags.get(key) is True and val is False and not _explicit_worsening_negative(msg):
+                continue
+            if old_flags.get(key) is True and val is False and key != "worsening_pain":
+                continue
             data["red_flags"][key] = val
     for key in ["water_broken", "vaginal_bleeding", "urge_to_push"]:
         val = llm_slots.get(key)
@@ -1265,11 +1301,18 @@ def _doctor_opening_from_memory(session: Dict[str, Any]) -> str:
     chief = str(shared.get("chief_complaint", "")).strip()
     triage = shared.get("triage", {}) if isinstance(shared.get("triage"), dict) else {}
     acuity = str(triage.get("acuity_ad", "")).strip()
+    lang = _session_lang(session, chief)
+    if lang == "zh":
+        if chief and acuity:
+            return f"我已查看你的分诊记录：主诉为{chief}（分级 {acuity}）。请先告诉我症状是从什么时候开始的（例如半小时前、今天上午10点）。"
+        if chief:
+            return f"我已查看你的分诊记录：主诉为{chief}。请先告诉我症状是从什么时候开始的（例如半小时前、今天上午10点）。"
+        return "我已查看你的分诊记录。请先告诉我症状是从什么时候开始的（例如半小时前、今天上午10点）。"
     if chief and acuity:
-        return f"I reviewed your triage note: main complaint is {chief} (acuity {acuity}). What changed most since arrival?"
+        return f"I reviewed your triage note: main complaint is {chief} (acuity {acuity}). Please tell me when the symptom started."
     if chief:
-        return f"I reviewed your triage note: main complaint is {chief}. What changed most since arrival?"
-    return "I reviewed your triage note. What changed most since arrival?"
+        return f"I reviewed your triage note: main complaint is {chief}. Please tell me when the symptom started."
+    return "I reviewed your triage note. Please tell me when the symptom started."
 
 
 def _doctor_disposition_summary(
@@ -1371,34 +1414,34 @@ def _maybe_auto_progress(session: Dict[str, Any]) -> None:
 
 def _doctor_next_question(topic: str, retry_count: int) -> str:
     direct = {
-        "duration": "When exactly did this pain start?",
-        "pain_score": "What is your current pain score from 0 to 10?",
-        "fever": "Do you have fever now?",
-        "breathing_difficulty": "Do you have breathing difficulty right now?",
-        "worsening_pain": "Is the pain getting worse compared with yesterday?",
-        "syncope": "Have you fainted or almost fainted?",
-        "radiating_pain": "Does the pain spread to your arm, jaw, or back?",
-        "water_broken": "Has your water broken?",
-        "contraction_interval": "How often are the contractions now?",
-        "vaginal_bleeding": "Do you have vaginal bleeding now?",
-        "urge_to_push": "Do you feel an urge to push now?",
+        "duration": "症状是从什么时候开始的？",
+        "pain_score": "你现在疼痛评分是0到10分里的几分？",
+        "fever": "你现在有发热吗？",
+        "breathing_difficulty": "你现在有呼吸困难吗？",
+        "worsening_pain": "和刚来时相比，现在是否更重了？",
+        "syncope": "有没有晕厥、抽搐或意识模糊？",
+        "radiating_pain": "疼痛有放射到手臂、下颌或背部吗？",
+        "water_broken": "是否已经破水？",
+        "contraction_interval": "宫缩现在大约几分钟一次？",
+        "vaginal_bleeding": "现在有阴道出血吗？",
+        "urge_to_push": "现在有明显想用力的感觉吗？",
     }
     clearer = {
-        "duration": "I still need the timeline: when exactly did it start (for example, yesterday morning or 2 days ago)?",
-        "pain_score": "Please provide one number only: your pain score right now from 0 to 10.",
-        "fever": "Please answer yes or no: do you currently have fever?",
-        "breathing_difficulty": "Please answer yes or no: are you short of breath right now?",
-        "worsening_pain": "Please answer yes or no: is it clearly worse than before?",
-        "syncope": "Please answer yes or no: any fainting or near-fainting episode?",
-        "radiating_pain": "Please answer yes or no: any pain spreading to arm, jaw, or back?",
-        "water_broken": "Please answer yes or no: has your water broken already?",
-        "contraction_interval": "Please tell me one number: about how many minutes between contractions now?",
-        "vaginal_bleeding": "Please answer yes or no: any active vaginal bleeding right now?",
-        "urge_to_push": "Please answer yes or no: do you feel strong urge to push now?",
+        "duration": "我还需要更精确的时间线：例如“半小时前”“今天上午10点”“昨天上午”等，是什么时候开始的？",
+        "pain_score": "请给一个数字：你现在疼痛是0到10分中的几分？",
+        "fever": "请明确回答：现在有发热吗？",
+        "breathing_difficulty": "请明确回答：现在有呼吸困难吗？",
+        "worsening_pain": "请明确回答：和之前比是否更重了？",
+        "syncope": "请明确回答：有没有晕厥、抽搐或意识模糊？",
+        "radiating_pain": "请明确回答：疼痛是否放射到手臂、下颌或背部？",
+        "water_broken": "请明确回答：是否已经破水？",
+        "contraction_interval": "请给一个时间：宫缩大约几分钟一次？",
+        "vaginal_bleeding": "请明确回答：现在有阴道出血吗？",
+        "urge_to_push": "请明确回答：现在是否有明显想用力的感觉？",
     }
     if retry_count >= 1:
-        return clearer.get(topic, "Please answer this point clearly in one short sentence?")
-    return direct.get(topic, "Please clarify this symptom in one sentence?")
+        return clearer.get(topic, "请用一句话明确回答这个问题。")
+    return direct.get(topic, "请用一句话补充这个症状信息。")
 
 
 def _ensure_single_question(candidate: str, fallback: str) -> str:
@@ -1461,6 +1504,33 @@ def _doctor_ready_stage2(
     if urgency in {"URGENT", "RESUS"}:
         return len(missing) == 0
     return len(missing) <= 1
+
+
+def _doctor_workflow_family(retrieval_result: Dict[str, Any]) -> str:
+    p = str(retrieval_result.get("primary_protocol_id", "")).strip()
+    if p == "chest_pain":
+        return "chest_pain"
+    if p in {"headache", "stroke"}:
+        return "headache"
+    if p in {"dizziness", "palpitations", "dyspnea"}:
+        return "dizziness_palpitation"
+    return "general"
+
+
+def _mandatory_slots_for_family(family: str) -> List[str]:
+    table = {
+        "chest_pain": ["duration", "worsening_pain", "breathing_difficulty", "radiating_pain"],
+        "headache": ["duration", "worsening_pain", "syncope"],
+        "dizziness_palpitation": ["duration", "syncope", "breathing_difficulty"],
+        "general": ["duration", "worsening_pain"],
+    }
+    return list(table.get(family, table["general"]))
+
+
+def _mandatory_slots_complete(session: Dict[str, Any], family: str) -> bool:
+    filled = _doctor_filled_slots(session)
+    required = _mandatory_slots_for_family(family)
+    return all((slot in filled and str(filled.get(slot, "")).strip() != "") for slot in required)
 
 
 def _build_doctor_followup_line(
@@ -1528,6 +1598,45 @@ def _is_imaging_question(text: str) -> bool:
     return has_question and any(k in t for k in img_kw)
 
 
+def _is_risk_anxiety_question(text: str) -> bool:
+    t = _normalize_text(text).lower()
+    has_question = ("?" in t) or ("？" in t) or ("吗" in t) or ("should" in t) or ("will" in t)
+    risk_kw = ["会不会死", "会死吗", "很危险吗", "脑出血", "中风", "dying", "dangerous", "heart attack"]
+    return has_question and any(k in t for k in risk_kw)
+
+
+def _has_unanswered_patient_question(session: Dict[str, Any], msg: str) -> bool:
+    assess = session.setdefault("shared_memory", {}).setdefault("doctor_assessment", {})
+    pending = list(assess.get("pending_patient_questions", []) or [])
+    answered = list(assess.get("answered_patient_questions", []) or [])
+    if _is_imaging_question(msg):
+        if "imaging" not in answered:
+            pending.append("imaging")
+    if _is_risk_anxiety_question(msg):
+        if "risk" not in answered:
+            pending.append("risk")
+    # de-dup keep order
+    seen = set()
+    pending_clean = []
+    for p in pending:
+        if p not in seen:
+            pending_clean.append(p)
+            seen.add(p)
+    assess["pending_patient_questions"] = pending_clean
+    _memory_touch(session)
+    return len(pending_clean) > 0
+
+
+def _risk_anxiety_fallback_reply(primary_protocol_id: str, language: str) -> str:
+    if language == "zh":
+        if primary_protocol_id in {"headache", "stroke"}:
+            return "我理解你的担心。我们会先排查危险信号并优先做必要检查，先确保安全。"
+        if primary_protocol_id == "chest_pain":
+            return "我理解你的担心。胸痛不一定是致命问题，但需要先排查高风险原因，我们会尽快评估。"
+        return "我理解你的担心。当前会先排查高风险信号，并根据结果决定下一步。"
+    return "I understand your concern. We will first rule out high-risk causes and prioritize urgent checks."
+
+
 def _imaging_fallback_recommendation(primary_protocol_id: str, language: str) -> str:
     if primary_protocol_id in {"stroke", "headache"}:
         return "根据目前症状，通常先做头颅 CT；若需要进一步评估可追加 MRI。"
@@ -1549,6 +1658,8 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
     session = _ensure_user_session()
     msg = message.strip()
     clean_msg = _normalize_text(msg)
+    lang = "zh" if _is_mostly_chinese(msg) else "en"
+    session.setdefault("shared_memory", {})["lang"] = lang
     _append_transcript(session, "PATIENT", msg)
 
     req = session["required_data"]
@@ -1565,7 +1676,11 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
     if session["phase"] == "INTAKE":
         _remember_intake(session, msg)
         if not req["chief_complaint"]:
-            ask = "Hi, I’m the triage nurse for intake. Before formal triage scoring, what brought you in today and how severe is it from 0 to 10?"
+            ask = (
+                "你好，我是分诊护士。正式分级前，请告诉我你今天主要哪里不舒服，严重程度 0-10 分是多少？"
+                if lang == "zh"
+                else "Hi, I’m the triage nurse for intake. Before formal triage scoring, what brought you in today and how severe is it from 0 to 10?"
+            )
             session["current_agent"] = "TRIAGE_NURSE"
             session["call_status"] = "TRIAGE_INTAKE"
             _append_transcript(session, "TRIAGE_NURSE", ask)
@@ -1577,11 +1692,19 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
             session["call_status"] = "MEASURING_VITALS"
             session["movement_suggestion"] = {
                 "target_zone": "vitals_station",
-                "instruction": "Please proceed to calling nurse station for vital measurement.",
+                "instruction": (
+                    "请前往叫号护士站进行生命体征测量。"
+                    if lang == "zh"
+                    else "Please proceed to calling nurse station for vital measurement."
+                ),
             }
             call_line = _agent_reply(
                 "CALLING_NURSE",
-                "I am the calling nurse. I will measure your vitals now and move you to triage immediately.",
+                (
+                    "我是叫号护士。现在为你测量生命体征，随后立刻送你去分诊。"
+                    if lang == "zh"
+                    else "I am the calling nurse. I will measure your vitals now and move you to triage immediately."
+                ),
                 session,
                 extra={"chief_complaint": req["chief_complaint"], "symptoms": req["symptoms"]},
                 use_llm=False,
@@ -1597,8 +1720,9 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
         _memory_touch(session)
 
         measure_note = (
-            f"Vitals measured: SpO2 {int(req['vitals']['spo2'])}, SBP {int(req['vitals']['sbp'])}. "
-            "Sending you to triage now."
+            f"生命体征已测量：SpO2 {int(req['vitals']['spo2'])}，SBP {int(req['vitals']['sbp'])}。现在送你去分诊。"
+            if lang == "zh"
+            else f"Vitals measured: SpO2 {int(req['vitals']['spo2'])}, SBP {int(req['vitals']['sbp'])}. Sending you to triage now."
         )
         _append_transcript(session, "CALLING_NURSE", measure_note)
         _enqueue_message(session, "calling_nurse", measure_note, event_type="measurement_completed")
@@ -1621,6 +1745,8 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
             (
                 f"Triage completed: acuity {encounter['triage']['acuity_ad']} "
                 f"(CTAS {encounter['triage']['ctas_compat']})."
+                if lang != "zh"
+                else f"分诊完成：急诊分级 {encounter['triage']['acuity_ad']}（CTAS {encounter['triage']['ctas_compat']}）。"
             ),
             session,
             extra={"triage": encounter.get("triage", {})},
@@ -1667,8 +1793,9 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                 wait_line = _agent_reply(
                     "CALLING_NURSE",
                     (
-                        f"You are in queue now. About {session['queue_position']} patients are before you, "
-                        f"estimated wait {session['estimated_wait_minutes']} minutes."
+                        f"你正在排队，前方约有 {session['queue_position']} 位患者，预计等待 {session['estimated_wait_minutes']} 分钟。"
+                        if lang == "zh"
+                        else f"You are in queue now. About {session['queue_position']} patients are before you, estimated wait {session['estimated_wait_minutes']} minutes."
                     ),
                     session,
                     use_llm=False,
@@ -1686,8 +1813,9 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
             line = _agent_reply(
                 "CALLING_NURSE",
                 (
-                    f"Please wait. {session['queue_position']} patients are before you, "
-                    f"estimated {session['estimated_wait_minutes']} minutes."
+                    f"请稍候，前方还有 {session['queue_position']} 位患者，预计等待 {session['estimated_wait_minutes']} 分钟。"
+                    if lang == "zh"
+                    else f"Please wait. {session['queue_position']} patients are before you, estimated {session['estimated_wait_minutes']} minutes."
                 ),
                 session,
                 use_llm=False,
@@ -1781,6 +1909,10 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
             plan_contract=plan_contract,
         )
 
+        patient_question_priority = bool(_is_imaging_question(msg) or _is_risk_anxiety_question(msg))
+        workflow_family = _doctor_workflow_family(retrieval_result)
+        unanswered_patient_question = _has_unanswered_patient_question(session, msg)
+
         old_ready = _doctor_ready_for_disposition(session)
         if retrieval_result.get("fallback_used", False):
             # If we failed to retrieve a matching protocol, we must be MORE conservative,
@@ -1803,12 +1935,26 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                     plan_contract=plan_contract,
                 )
             )
+        if patient_question_priority:
+            ready_for_disposition = False
+        if not _mandatory_slots_complete(session, workflow_family):
+            ready_for_disposition = False
+        if unanswered_patient_question:
+            ready_for_disposition = False
 
         if not ready_for_disposition:
             if bridge_result is not None and getattr(bridge_result, "patient_explanation", ""):
                 imaging_line = str(bridge_result.patient_explanation).strip()
                 _append_transcript(session, "DOCTOR", imaging_line)
                 _enqueue_message(session, "doctor", imaging_line, event_type="doctor_answer")
+                assess = session.setdefault("shared_memory", {}).setdefault("doctor_assessment", {})
+                pending = list(assess.get("pending_patient_questions", []) or [])
+                assess["pending_patient_questions"] = [p for p in pending if p != "imaging"]
+                answered = list(assess.get("answered_patient_questions", []) or [])
+                if "imaging" not in answered:
+                    answered.append("imaging")
+                assess["answered_patient_questions"] = answered
+                _memory_touch(session)
             elif _is_imaging_question(msg):
                 # Legacy fallback when KB not available.
                 primary = str(retrieval_result.get("primary_protocol_id", "")).strip()
@@ -1823,6 +1969,34 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                 )
                 _append_transcript(session, "DOCTOR", imaging_line)
                 _enqueue_message(session, "doctor", imaging_line, event_type="doctor_answer")
+                assess = session.setdefault("shared_memory", {}).setdefault("doctor_assessment", {})
+                pending = list(assess.get("pending_patient_questions", []) or [])
+                assess["pending_patient_questions"] = [p for p in pending if p != "imaging"]
+                answered = list(assess.get("answered_patient_questions", []) or [])
+                if "imaging" not in answered:
+                    answered.append("imaging")
+                assess["answered_patient_questions"] = answered
+                _memory_touch(session)
+            elif _is_risk_anxiety_question(msg):
+                primary = str(retrieval_result.get("primary_protocol_id", "")).strip()
+                lang = str(plan_contract.get("language", "zh")).strip()
+                risk_line = _agent_reply(
+                    "DOCTOR",
+                    _risk_anxiety_fallback_reply(primary, lang),
+                    session,
+                    extra={"mode": "patient_risk_anxiety_answer", "primary_protocol_id": primary, "patient_message": msg},
+                    use_llm=True,
+                )
+                _append_transcript(session, "DOCTOR", risk_line)
+                _enqueue_message(session, "doctor", risk_line, event_type="doctor_answer")
+                assess = session.setdefault("shared_memory", {}).setdefault("doctor_assessment", {})
+                pending = list(assess.get("pending_patient_questions", []) or [])
+                assess["pending_patient_questions"] = [p for p in pending if p != "risk"]
+                answered = list(assess.get("answered_patient_questions", []) or [])
+                if "risk" not in answered:
+                    answered.append("risk")
+                assess["answered_patient_questions"] = answered
+                _memory_touch(session)
 
             if bridge_result is not None and getattr(bridge_result, "rendered_question", ""):
                 line = _ensure_single_question(str(bridge_result.rendered_question), "When did it start?")
@@ -1837,7 +2011,37 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
             _append_transcript(session, "DOCTOR", line)
             _enqueue_message(session, "doctor", line, event_type="doctor_followup")
         else:
-            encounter = _ENCOUNTERS.get(session["encounter_id"], {})
+            if _is_imaging_question(msg) or _is_risk_anxiety_question(msg):
+                primary = str(retrieval_result.get("primary_protocol_id", "")).strip()
+                lang = str(plan_contract.get("language", "zh")).strip()
+                answer = (
+                    _imaging_fallback_recommendation(primary, lang)
+                    if _is_imaging_question(msg)
+                    else _risk_anxiety_fallback_reply(primary, lang)
+                )
+                answer_line = _agent_reply(
+                    "DOCTOR",
+                    answer,
+                    session,
+                    extra={"mode": "patient_question_answer_before_disposition", "primary_protocol_id": primary, "patient_message": msg},
+                    use_llm=True,
+                )
+                _append_transcript(session, "DOCTOR", answer_line)
+                _enqueue_message(session, "doctor", answer_line, event_type="doctor_answer")
+                follow = _build_doctor_followup_line(
+                    session,
+                    plan_contract=plan_contract,
+                    retrieval_result=retrieval_result,
+                    evidence=evidence,
+                    patient_message=msg,
+                )
+                _append_transcript(session, "DOCTOR", follow)
+                _enqueue_message(session, "doctor", follow, event_type="doctor_followup")
+                ready_for_disposition = False
+            if not ready_for_disposition:
+                pass
+            else:
+                encounter = _ENCOUNTERS.get(session["encounter_id"], {})
             triage = encounter.get("triage", {})
             acuity = triage.get("acuity_ad", "C")
             assess = session.setdefault("shared_memory", {}).setdefault("doctor_assessment", {})
@@ -1895,7 +2099,11 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                 _sync_user_patient_to_auto(session, enqueue_doctor=False, user_phase="DONE")
                 line = _agent_reply(
                     "DOCTOR",
-                    "Assessment complete. Follow outpatient pathway for next management.",
+                    (
+                        "评估完成。请按门诊路径进行后续处理。"
+                        if lang == "zh"
+                        else "Assessment complete. Follow outpatient pathway for next management."
+                    ),
                     session,
                     extra={"patient_message": msg},
                     use_llm=False,
@@ -1908,14 +2116,29 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
 
     else:
         if not _is_smalltalk(clean_msg):
-            line = _agent_reply(
-                "SYSTEM",
-                "Current encounter is completed. Start a new session if needed.",
-                session,
-                use_llm=False,
-            )
-            _append_transcript(session, "SYSTEM", line)
-            _enqueue_message(session, "system", line, event_type="session_completed")
+            if _is_imaging_question(msg) or _is_risk_anxiety_question(msg):
+                retrieval_result = retrieve_protocols(
+                    chief_complaint=str(session.get("shared_memory", {}).get("chief_complaint", "")),
+                    symptoms=list(session.get("shared_memory", {}).get("symptoms", []) or []),
+                    patient_message=msg,
+                    vitals=dict(session.get("shared_memory", {}).get("vitals", {}) or {}),
+                )
+                lang_done = _session_lang(session, msg)
+                primary = str(retrieval_result.get("primary_protocol_id", "")).strip()
+                reply = (
+                    _imaging_fallback_recommendation(primary, lang_done)
+                    if _is_imaging_question(msg)
+                    else _risk_anxiety_fallback_reply(primary, lang_done)
+                )
+                _append_transcript(session, "DOCTOR", reply)
+                _enqueue_message(session, "doctor", reply, event_type="doctor_answer")
+                end_line = "本轮问诊已结束，如症状变化请重新开始问诊。"
+                _append_transcript(session, "SYSTEM", end_line)
+                _enqueue_message(session, "system", end_line, event_type="session_completed")
+            else:
+                line = "本轮问诊已结束，如症状变化请重新开始问诊。"
+                _append_transcript(session, "SYSTEM", line)
+                _enqueue_message(session, "system", line, event_type="session_completed")
 
     _maybe_auto_progress(session)
     pending_messages = list(session.get("pending_messages", []))

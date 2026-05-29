@@ -7,6 +7,7 @@ from os import listdir
 import os
 
 import datetime
+from zoneinfo import ZoneInfo
 from django.shortcuts import render, redirect, HttpResponseRedirect
 from django.http import HttpResponse, JsonResponse
 from global_methods import *
@@ -675,6 +676,21 @@ def _reset_runtime_state_for_new_run(sim_code: str, *, requested_seed=None) -> d
     )
     return trace
 
+
+def _sync_meta_to_current_beijing_time(sim_code: str) -> None:
+    """Align simulation wall-clock display to current Beijing time."""
+    meta_path = Path(_storage_path(sim_code, "reverie", "meta.json"))
+    if not meta_path.exists():
+        return
+    try:
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+        now_bj = datetime.datetime.now(ZoneInfo("Asia/Shanghai"))
+        payload["start_date"] = now_bj.strftime("%B %d, %Y")
+        payload["curr_time"] = now_bj.strftime("%B %d, %Y, %H:%M:%S")
+        meta_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        return
+
 def landing(request): 
     context = {}
     template = "landing/landing.html"
@@ -1322,6 +1338,7 @@ def start_backend(request, origin, target):
             _cleanup_stale_runtime_state()
         if check_if_file_exists(_temp_path("curr_step.json")):
             os.remove(_temp_path("curr_step.json"))
+        _sync_meta_to_current_beijing_time(target)
         trace_snapshot = _read_runtime_trace(target)
         if not trace_snapshot.get("run_id"):
             _reset_runtime_state_for_new_run(target, requested_seed=_read_meta_seed(origin))

@@ -46,6 +46,7 @@ from wait_time_utils import (
     _assign_wait_targets,
 )
 from week7_logic import effective_arrival_rate
+from failure_metrics import collect_failure_metrics
 
 
 current_file = os.path.abspath(__file__)
@@ -70,6 +71,52 @@ def _seed_runtime_rngs(seed: int) -> None:
     """Seed both Python and NumPy RNGs so patient generation is reproducible."""
     random.seed(seed)
     numpy.random.seed(int(seed) % (2 ** 32))
+
+
+def merge_failure_metrics_into_status(status_json, failure_metrics, curr_step):
+  """Merge aggregate failure metrics into sim_status without writing patient-level detail."""
+  if not isinstance(status_json, dict):
+    status_json = {}
+  if not isinstance(failure_metrics, dict):
+    failure_metrics = {}
+
+  resources = status_json.setdefault("resources", {})
+  resources["total_arrived_patients"] = int(failure_metrics.get("total_arrived_patients", 0) or 0)
+  resources["failed_patients_count"] = int(failure_metrics.get("failed_patients_count", 0) or 0)
+  resources["failure_rate"] = float(failure_metrics.get("failure_rate", 0.0) or 0.0)
+  resources["system_failed"] = bool(failure_metrics.get("system_failed", False))
+  resources["failure_threshold"] = float(failure_metrics.get("failure_threshold", 0.1) or 0.1)
+  resources["system_failed_comparator"] = failure_metrics.get("system_failed_comparator", "gt")
+  resources["failure_reason_counts"] = dict(failure_metrics.get("failure_reason_counts", {}) or {})
+  resources["lwbs_count"] = int(failure_metrics.get("lwbs_count", 0) or 0)
+  resources["boarding_timeout_count"] = int(failure_metrics.get("boarding_timeout_count", 0) or 0)
+  resources["ctas_target_wait_violation_count"] = int(
+    failure_metrics.get("ctas_target_wait_violation_count", 0) or 0
+  )
+  resources["ed_los_over_threshold_count"] = int(
+    failure_metrics.get("ed_los_over_threshold_count", 0) or 0
+  )
+  resources["queue_overflow_exposure_count"] = int(
+    failure_metrics.get("queue_overflow_exposure_count", 0) or 0
+  )
+  resources["severe_trauma_time_to_surgery_violation_count"] = int(
+    failure_metrics.get("severe_trauma_time_to_surgery_violation_count", 0) or 0
+  )
+  resources["critical_outcome_event_count"] = int(
+    failure_metrics.get("critical_outcome_event_count", 0) or 0
+  )
+  resources["ctas_compliance_rate"] = failure_metrics.get("ctas_compliance_rate", None)
+  resources["ctas_violations_by_level"] = dict(failure_metrics.get("ctas_violations_by_level", {}) or {})
+  resources["severe_trauma_success_rate"] = failure_metrics.get("severe_trauma_success_rate", None)
+
+  system_health = status_json.setdefault("system_health", {})
+  system_failed = bool(failure_metrics.get("system_failed", False))
+  system_health["failed"] = system_failed
+  system_health["failed_reason"] = "failure_rate_exceeded_threshold" if system_failed else None
+  system_health["failure_rate"] = float(failure_metrics.get("failure_rate", 0.0) or 0.0)
+  system_health["failed_at_step"] = int(curr_step) if system_failed else None
+
+  return status_json
 
 def trace_calls_and_lines(frame, event, arg):
     if event == 'call':
@@ -429,6 +476,7 @@ class ReverieServer:
     self.meta_path = f"{sim_folder}/reverie/meta.json"
     with open(self.meta_path) as json_file:  
       reverie_meta = json.load(json_file)
+    self.reverie_meta = copy.deepcopy(reverie_meta)
     utils.log_runtime_event(
       "meta loaded",
       sim_code=self.sim_code,
@@ -452,6 +500,7 @@ class ReverieServer:
     _seed_runtime_rngs(self.seed)
     reverie_meta["seed"] = self.seed
     _atomic_write_json(self.meta_path, reverie_meta)
+    self.reverie_meta = copy.deepcopy(reverie_meta)
     self.runtime_trace_path = f"{sim_folder}/runtime_trace.json"
     trace_payload = _write_runtime_trace(
       self.runtime_trace_path,
@@ -605,8 +654,14 @@ class ReverieServer:
     # Patient time increment for data collection is set according to steps
     Patient.time_increment = reverie_meta["sec_per_step"] / 60 # In minutes
     Patient.priority_factor = reverie_meta["priority_factor"]
-    Patient.testing_result_time = reverie_meta["testing_result_time"] * self.surge_multiplier
-    Patient.testing_time        = reverie_meta["testing_time"]        * self.surge_multiplier
+    # Diagnostic turnaround is configured in minutes, but later code uses
+    # random.randint on testing_result_time. Keep the runtime value integral
+    # and at least 1 minute so surge scaling cannot produce an invalid float.
+    Patient.testing_result_time = max(
+      1,
+      int(round(float(reverie_meta["testing_result_time"]) * self.surge_multiplier))
+    )
+    Patient.testing_time        = float(reverie_meta["testing_time"]) * self.surge_multiplier
     Patient.testing_probability_by_ctas = reverie_meta.get("testing_probability_by_ctas",
         {"1": 1.0, "2": 0.8, "3": 0.5, "4": 0.3, "5": 0.0})
     Patient.lab_turnaround_minutes = self.lab_turnaround_minutes
@@ -638,7 +693,7 @@ class ReverieServer:
 
     Triage_Nurse.priority_factor = reverie_meta["priority_factor"]
 
-    Bedside_Nurse.testing_time    = reverie_meta["testing_time"] * self.surge_multiplier
+    Bedside_Nurse.testing_time    = float(reverie_meta["testing_time"]) * self.surge_multiplier
     Bedside_Nurse.resting_time    = Bedside_Nurse.resting_time  * self.surge_multiplier
     Bedside_Nurse.priority_factor = reverie_meta["priority_factor"]
     Doctor.doctor_resting_time    = Doctor.doctor_resting_time  * self.surge_multiplier
@@ -1483,6 +1538,15 @@ class ReverieServer:
       "doctors_accepting": doctors_free,
       "doctor_max_patients": Doctor.max_patients,
     }
+    failure_metrics = collect_failure_metrics(
+      personas=self.personas,
+      maze=self.maze,
+      data_collection=self.data_collection,
+      meta=self.reverie_meta or {},
+      curr_time=self.curr_time,
+      curr_step=self.step,
+    )
+    status_json = merge_failure_metrics_into_status(status_json, failure_metrics, self.step)
     for zone_name in ["trauma room", "major injuries zone",
                        "minor injuries zone", "diagnostic room"]:
       info = self.maze.injuries_zones.get(zone_name, {})
@@ -1712,6 +1776,7 @@ class ReverieServer:
     reverie_meta["persona_names"] = persona_list
     reverie_meta["step"] = self.step
     _atomic_write_json(reverie_meta_f, reverie_meta)
+    self.reverie_meta = copy.deepcopy(reverie_meta)
 
     # In headless mode, write the environment file for the current step so that
     # the next safe-mode chunk can bootstrap from it in __init__.

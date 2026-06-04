@@ -1,0 +1,41 @@
+failure_threshold: 0.1
+system_failed_comparator: gt
+
+search:
+  method: coarse_to_fine
+  coarse_load_factors: [1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0]
+  fine_step: 0.05
+  max_load_factor: 3.0
+  min_load_factor: 1.0
+  aggregation: median_failure_rate
+  local_signal_seeds: [42]
+  cluster_fine_seeds: [42, 43, 44]
+  cluster_final_validation_seeds: [42, 43, 44, 45, 46, 47, 48, 49, 50, 51]
+  cluster_run_steps: 20000
+
+profiles:
+  - large_tertiary_ed
+  - medium_city_ed
+  - small_county_ed
+
+phase5a:
+  local_concurrency: 1
+  max_local_concurrency: 2
+  signal_check_run_steps: [100, 200, 1000]
+
+phase5b:
+  cpu_only: true
+  slurm_cpus_per_task: 4
+  slurm_mem: 16G
+  slurm_time: "08:00:00"
+
+outputs:
+  threshold_report: analysis/threshold_search_report.json
+  preload_sensitivity_report: analysis/preload_sensitivity_report.json
+  local_signal_check_report: analysis/local_signal_check_report.json
+  local_preliminary_coarse_sweep_report: analysis/local_preliminary_coarse_sweep_report.json
+  local_bracket_report: analysis/local_bracket_report.json
+  cluster_fine_sweep_matrix: configs/cluster_fine_sweep_matrix.csv
+  cluster_final_validation_matrix: configs/cluster_final_validation_matrix.csv
+  trigger_audit: docs/week13_failure_reason_trigger_audit.md
+  phase5_summary: docs/week13_phase5_two_stage_threshold_search_summary.md

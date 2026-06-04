@@ -1,0 +1,46 @@
+{
+  "large_tertiary_ed": {
+    "scenario_status": "engineering_default_pending_evidence_fill",
+    "description": "大型三甲/区域中心急诊。用于模拟高并发承载能力与 boarding 传播。",
+    "doctor_count": 8,
+    "nurse_count": 16,
+    "standard_patients_per_doctor": 8,
+    "standard_patients_per_nurse": 4,
+    "normal_patient_count": 64,
+    "load_factors": [0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0],
+    "evidence_note": "engineering default for simulation; not official universal standard"
+  },
+  "medium_city_ed": {
+    "scenario_status": "engineering_default_pending_evidence_fill",
+    "description": "城市中型综合医院急诊。作为默认城市 baseline。",
+    "doctor_count": 4,
+    "nurse_count": 8,
+    "standard_patients_per_doctor": 7,
+    "standard_patients_per_nurse": 3.5,
+    "normal_patient_count": 28,
+    "load_factors": [0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0],
+    "evidence_note": "engineering default for simulation; not official universal standard"
+  },
+  "small_county_ed": {
+    "scenario_status": "engineering_default_pending_evidence_fill",
+    "description": "小县城/基层医院急诊。用于测试单一时间 preload 冲击脆弱性。",
+    "doctor_count": 2,
+    "nurse_count": 4,
+    "standard_patients_per_doctor": 6,
+    "standard_patients_per_nurse": 3,
+    "normal_patient_count": 12,
+    "load_factors": [1.0, 1.5, 2.0, 2.5, 3.0],
+    "evidence_note": "engineering default for simulation; not official universal standard"
+  },
+  "night_low_resource_ed": {
+    "scenario_status": "extreme_demo",
+    "description": "夜间低资源边界场景。只作为极端压力测试，不作为正式医院等级。",
+    "doctor_count": 1,
+    "nurse_count": 2,
+    "standard_patients_per_doctor": 5,
+    "standard_patients_per_nurse": 2.5,
+    "normal_patient_count": 5,
+    "load_factors": [1.0, 2.0, 3.0],
+    "evidence_note": "engineering stress-test scenario; not official standard"
+  }
+}

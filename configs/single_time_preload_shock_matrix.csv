@@ -1,0 +1,7 @@
+scenario_id,hospital_profile,doctor_count,nurse_count,normal_patient_count,load_factor,preload_patient_count,arrival_profile_mode,background_arrival_enabled,boarding_profile,ctas_distribution,seed,run_steps
+small_county_ed__lf_2p0__seed_42,small_county_ed,2,4,12,2.0,24,normal,false,baseline,fixed_default,42,1000
+small_county_ed__lf_2p0__seed_43,small_county_ed,2,4,12,2.0,24,normal,false,baseline,fixed_default,43,1000
+small_county_ed__lf_2p0__seed_44,small_county_ed,2,4,12,2.0,24,normal,false,baseline,fixed_default,44,1000
+small_county_ed__lf_3p0__seed_42,small_county_ed,2,4,12,3.0,36,normal,false,baseline,fixed_default,42,1000
+small_county_ed__lf_3p0__seed_43,small_county_ed,2,4,12,3.0,36,normal,false,baseline,fixed_default,43,1000
+small_county_ed__lf_3p0__seed_44,small_county_ed,2,4,12,3.0,36,normal,false,baseline,fixed_default,44,1000

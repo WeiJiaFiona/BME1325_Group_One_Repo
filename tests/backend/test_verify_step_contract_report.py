@@ -1,13 +1,14 @@
 import json
 import sys
 from pathlib import Path
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.verify_step_contract import _export_dialogue_report
+from scripts.verify_step_contract import _export_dialogue_report, _check_week13_failure_metrics_schema
 
 
 def test_export_dialogue_report_generates_markdown(tmp_path: Path):
@@ -40,3 +41,33 @@ def test_export_dialogue_report_generates_markdown(tmp_path: Path):
     assert "Dialogue Provenance Report" in content
     assert "Doctor 1" in content
     assert "agent_chat_v2_iterative" in content
+
+
+def test_week13_failure_metrics_missing_defaults_to_warning():
+    status_payload = {"resources": {}, "system_health": {}}
+    warnings, failures = _check_week13_failure_metrics_schema(status_payload, strict=False)
+    assert warnings
+    assert not failures
+    assert "WARNING:" in warnings[0]
+
+
+def test_week13_failure_metrics_strict_mode_hard_fails():
+    status_payload = {"resources": {}, "system_health": {}}
+    warnings, failures = _check_week13_failure_metrics_schema(status_payload, strict=True)
+    assert not warnings
+    assert failures
+
+
+def test_week13_failure_metrics_present_passes():
+    status_payload = {
+        "resources": {
+            "failure_rate": 0.1,
+            "failed_patients_count": 1,
+            "failure_reason_counts": {},
+            "system_failed": False,
+        },
+        "system_health": {"failed": False},
+    }
+    warnings, failures = _check_week13_failure_metrics_schema(status_payload, strict=True)
+    assert not warnings
+    assert not failures

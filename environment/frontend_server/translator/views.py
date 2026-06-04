@@ -22,7 +22,7 @@ from pathlib import Path
 import subprocess
 from django.http import JsonResponse
 import sys
-from typing import Optional
+from typing import Optional, Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 FRONTEND_ROOT = Path(__file__).resolve().parents[1]
@@ -209,22 +209,50 @@ def _ensure_seed_sim_storage(sim_code: str) -> Path:
     )
 
 
-def _list_running_reverie_processes(backend_dir: Path) -> list[int]:
+def _extract_target_from_cmdline(cmdline: list[str]) -> Optional[str]:
+    if not cmdline:
+        return None
+    for idx, part in enumerate(cmdline):
+        if str(part).strip() == "--target" and idx + 1 < len(cmdline):
+            candidate = _normalize_sim_code(cmdline[idx + 1])
+            if candidate:
+                return candidate
+    return None
+
+
+def _process_matches_backend(proc_info: dict[str, Any], backend_dir: Path) -> bool:
     backend_dir_str = str(backend_dir.resolve()).lower()
+    cmdline = proc_info.get("cmdline") or []
+    cwd = str(proc_info.get("cwd") or "").lower()
+    normalized_cmd = " ".join(cmdline).lower()
+    if "reverie.py" not in normalized_cmd:
+        return False
+    if backend_dir_str in normalized_cmd or cwd == backend_dir_str:
+        return True
+    project_root_str = str(PROJECT_ROOT).lower()
+    return "backend_server" in normalized_cmd and project_root_str in normalized_cmd
+
+
+def _list_running_reverie_process_infos(backend_dir: Path) -> list[dict[str, Any]]:
     running = []
-    for proc in psutil.process_iter(["pid", "cmdline", "cwd"]):
+    for proc in psutil.process_iter(["pid", "cmdline", "cwd", "name"]):
         try:
-            cmdline = proc.info.get("cmdline") or []
-            cwd = (proc.info.get("cwd") or "").lower()
-            normalized_cmd = " ".join(cmdline).lower()
+            proc_info = dict(proc.info)
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
-
-        if "reverie.py" not in normalized_cmd:
+        if not _process_matches_backend(proc_info, backend_dir):
             continue
-        if backend_dir_str in normalized_cmd or cwd == backend_dir_str:
-            running.append(proc.info["pid"])
+        running.append({
+            "pid": int(proc_info.get("pid")),
+            "cmdline": proc_info.get("cmdline") or [],
+            "cwd": proc_info.get("cwd") or "",
+            "target": _extract_target_from_cmdline(proc_info.get("cmdline") or []),
+        })
     return running
+
+
+def _list_running_reverie_processes(backend_dir: Path) -> list[int]:
+    return [info["pid"] for info in _list_running_reverie_process_infos(backend_dir)]
 
 
 def _list_pending_command_files() -> list[Path]:
@@ -363,6 +391,181 @@ def _terminate_backend_processes(pids: list[int]) -> list[int]:
             except Exception:
                 pass
     return terminated
+
+
+def _read_recent_runtime_trace_target(max_age_seconds: float = 300.0) -> Optional[str]:
+    now = time.time()
+    latest_target = None
+    latest_mtime = -1.0
+    try:
+        for runtime_trace in STORAGE_ROOT.glob("*/runtime_trace.json"):
+            try:
+                mtime = runtime_trace.stat().st_mtime
+            except OSError:
+                continue
+            if (now - mtime) > max_age_seconds:
+                continue
+            if mtime > latest_mtime:
+                latest_target = runtime_trace.parent.name
+                latest_mtime = mtime
+    except Exception:
+        return None
+    return _normalize_sim_code(latest_target) if latest_target else None
+
+
+def detect_running_backend_state(
+    requested_target: Optional[str],
+    backend_dir: Optional[Path] = None,
+) -> dict[str, Any]:
+    if backend_dir is None:
+        backend_dir = _resolve_backend_dir()
+    requested_target = _normalize_sim_code(requested_target) if requested_target else requested_target
+    process_infos = _list_running_reverie_process_infos(backend_dir) if backend_dir.exists() else []
+    running_pids = [info["pid"] for info in process_infos]
+    curr_sim_code = _current_sim_code(None)
+    runtime_trace_target = _read_recent_runtime_trace_target()
+    metadata_target = next((info.get("target") for info in process_infos if info.get("target")), None)
+    running_target = curr_sim_code or runtime_trace_target or metadata_target
+    running_target = _normalize_sim_code(running_target) if running_target else None
+    return {
+        "backend_alive": bool(running_pids),
+        "running_pids": running_pids,
+        "running_target": running_target,
+        "requested_target": requested_target,
+        "target_matches": bool(running_target and requested_target and running_target == requested_target),
+        "curr_sim_code": curr_sim_code,
+        "runtime_trace_target": runtime_trace_target,
+        "metadata_target": metadata_target,
+        "process_infos": process_infos,
+    }
+
+
+def _pid_is_kill_safe(pid: int, backend_dir: Optional[Path] = None) -> bool:
+    if backend_dir is None:
+        backend_dir = _resolve_backend_dir()
+    try:
+        proc = psutil.Process(pid)
+        cmdline = proc.cmdline()
+        cwd = proc.cwd()
+    except (psutil.NoSuchProcess, psutil.ZombieProcess):
+        return False
+    except psutil.AccessDenied:
+        # Keep kill-safe for taskkill fallback if psutil metadata is blocked but PID was
+        # already identified as a running backend by our process scanner.
+        return pid in _list_running_reverie_processes(backend_dir)
+
+    proc_info = {
+        "pid": pid,
+        "cmdline": cmdline,
+        "cwd": cwd,
+    }
+    return _process_matches_backend(proc_info, backend_dir)
+
+
+def _kill_backend_pid(pid: int, backend_dir: Optional[Path] = None) -> dict[str, Any]:
+    if backend_dir is None:
+        backend_dir = _resolve_backend_dir()
+    result = {
+        "pid": int(pid),
+        "status": None,
+        "method": None,
+        "stdout": "",
+        "stderr": "",
+    }
+    safe_backend_pid = _pid_is_kill_safe(pid, backend_dir)
+    if not safe_backend_pid and pid in _list_running_reverie_processes(backend_dir):
+        safe_backend_pid = True
+    if not safe_backend_pid:
+        result["status"] = "unsafe_target"
+        return result
+
+    try:
+        proc = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        result["status"] = "process_not_found"
+        return result
+    except psutil.AccessDenied:
+        proc = None
+
+    if proc is not None:
+        try:
+            proc.kill()
+            proc.wait(timeout=3)
+            result["status"] = "killed"
+            result["method"] = "psutil.kill"
+            return result
+        except psutil.NoSuchProcess:
+            result["status"] = "process_not_found"
+            result["method"] = "psutil.kill"
+            return result
+        except psutil.AccessDenied as exc:
+            result["status"] = "access_denied"
+            result["method"] = "psutil.kill"
+            result["stderr"] = str(exc)
+        except psutil.TimeoutExpired as exc:
+            result["status"] = "still_alive_after_kill"
+            result["method"] = "psutil.kill"
+            result["stderr"] = str(exc)
+        except Exception as exc:
+            result["status"] = "kill_failed"
+            result["method"] = "psutil.kill"
+            result["stderr"] = str(exc)
+
+    if sys.platform == "win32":
+        try:
+            completed = subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+            result["method"] = "taskkill"
+            result["stdout"] = completed.stdout
+            result["stderr"] = completed.stderr
+            if completed.returncode == 0 and not psutil.pid_exists(pid):
+                result["status"] = "killed"
+            elif completed.returncode == 0:
+                result["status"] = "still_alive_after_kill"
+            else:
+                lowered = f"{completed.stdout} {completed.stderr}".lower()
+                if "access is denied" in lowered:
+                    result["status"] = "access_denied"
+                elif "not found" in lowered or "no running instance" in lowered:
+                    result["status"] = "process_not_found"
+                else:
+                    result["status"] = "kill_failed"
+            return result
+        except Exception as exc:
+            result["method"] = "taskkill"
+            result["stderr"] = str(exc)
+            result["status"] = "kill_failed"
+            return result
+
+    if result["status"] is None:
+        result["status"] = "kill_failed"
+    return result
+
+
+def _shutdown_backend_processes_with_results(
+    pids: list[int],
+    backend_dir: Optional[Path] = None,
+) -> dict[str, Any]:
+    results = [_kill_backend_pid(int(pid), backend_dir=backend_dir) for pid in pids]
+    surviving = []
+    for pid in pids:
+        try:
+            if psutil.pid_exists(int(pid)) and _pid_is_kill_safe(int(pid), backend_dir):
+                surviving.append(int(pid))
+        except Exception:
+            surviving.append(int(pid))
+    success = bool(pids) and not surviving
+    return {
+        "ok": success,
+        "results": results,
+        "surviving_pids": surviving,
+    }
 
 
 def _list_numeric_step_files(directory: str) -> list[int]:
@@ -1321,17 +1524,37 @@ def start_backend(request, origin, target):
                 "ok": False,
                 "error": f"Backend directory not found: {backend_dir}"
             })
-        running_pids = _list_running_reverie_processes(backend_dir)
+        running_state = detect_running_backend_state(target, backend_dir=backend_dir)
+        running_pids = list(running_state.get("running_pids") or [])
         backend_health = _runtime_backend_health(target, backend_dir=backend_dir)
-        if running_pids and not backend_health.get("stalled"):
-            _sync_runtime_trace(target)
-            return JsonResponse({
-                "ok": running_pids[0],
-                "backend_dir": str(backend_dir),
-                "already_running": True,
-                "running_pids": running_pids,
-                "backend_health": backend_health,
-            })
+        if running_state.get("backend_alive") and not backend_health.get("stalled"):
+            if running_state.get("target_matches"):
+                _sync_runtime_trace(target)
+                return JsonResponse({
+                    "ok": running_pids[0],
+                    "backend_dir": str(backend_dir),
+                    "already_running": True,
+                    "running_pids": running_pids,
+                    "running_target": running_state.get("running_target"),
+                    "requested_target": target,
+                    "target_matches": True,
+                    "backend_health": backend_health,
+                })
+            shutdown_result = _shutdown_backend_processes_with_results(running_pids, backend_dir=backend_dir)
+            if not shutdown_result.get("ok"):
+                return JsonResponse({
+                    "ok": False,
+                    "error": "stale_backend_target_mismatch",
+                    "backend_dir": str(backend_dir),
+                    "running_pids": running_pids,
+                    "running_target": running_state.get("running_target"),
+                    "requested_target": target,
+                    "target_matches": False,
+                    "curr_sim_code": running_state.get("curr_sim_code"),
+                    "shutdown_result": shutdown_result,
+                }, status=503)
+            running_pids = []
+            backend_health = _runtime_backend_health(target, backend_dir=backend_dir)
         stale_runtime = bool(check_if_file_exists(_temp_path("curr_step.json"))) and not running_pids
         if backend_health.get("stalled") or stale_runtime:
             _terminate_backend_processes(running_pids)
@@ -1476,6 +1699,9 @@ def start_backend(request, origin, target):
         return JsonResponse({
             "ok": curr_sim.pid if curr_sim else True,
             "backend_dir": str(backend_dir),
+            "requested_target": target,
+            "running_target": target if startup_ok else _current_sim_code(""),
+            "target_matches": startup_ok,
             "backend_health": post_health,
         })
 
@@ -1517,6 +1743,30 @@ def live_dashboard_api(request):
             data = json.load(f)
     except (json.JSONDecodeError, IOError):
         return JsonResponse({"error": "Status file unreadable, retrying..."}, status=503)
+
+    resources = data.setdefault("resources", {})
+    resources.setdefault("failure_rate", 0.0)
+    resources.setdefault("failed_patients_count", 0)
+    resources.setdefault("system_failed", False)
+    resources.setdefault("failure_threshold", 0.1)
+    resources.setdefault("system_failed_comparator", "gt")
+    resources.setdefault("failure_reason_counts", {})
+    resources.setdefault("lwbs_count", 0)
+    resources.setdefault("boarding_timeout_count", 0)
+    resources.setdefault("ctas_target_wait_violation_count", 0)
+    resources.setdefault("ed_los_over_threshold_count", 0)
+    resources.setdefault("queue_overflow_exposure_count", 0)
+    resources.setdefault("severe_trauma_time_to_surgery_violation_count", 0)
+    resources.setdefault("critical_outcome_event_count", 0)
+    resources.setdefault("ctas_compliance_rate", None)
+    resources.setdefault("ctas_violations_by_level", {})
+    resources.setdefault("severe_trauma_success_rate", None)
+
+    system_health = data.setdefault("system_health", {})
+    system_health.setdefault("failed", False)
+    system_health.setdefault("failed_reason", None)
+    system_health.setdefault("failure_rate", resources.get("failure_rate", 0.0))
+    system_health.setdefault("failed_at_step", None)
 
     try:
         status_step = int(data.get("step"))
@@ -1697,22 +1947,23 @@ def save_simulation_settings(request):
 def force_shutdown(request):
     try:
         data = json.loads(request.body)
-        pid = int(data.get("pid"))
-
-        if not pid:
+        raw_pids = data.get("pids")
+        if raw_pids is None:
+            raw_pid = data.get("pid")
+            raw_pids = [raw_pid] if raw_pid not in (None, "") else []
+        try:
+            pids = [int(pid) for pid in raw_pids]
+        except (TypeError, ValueError):
+            return JsonResponse({"ok": False, "error": "Invalid PID payload"}, status=400)
+        if not pids:
             return JsonResponse({"ok": False, "error": "No PID provided"}, status=400)
 
         file_path = Path(_temp_path("sim_output.json"))
         file_path.unlink(missing_ok=True)
-
-        proc = psutil.Process(pid)
-        proc.kill()
-        proc.wait(timeout=3)
-
-        return JsonResponse({"ok": True})
-
-    except psutil.NoSuchProcess:
-        return JsonResponse({"ok": False, "error": "Process already dead"})
+        backend_dir = _resolve_backend_dir()
+        shutdown_result = _shutdown_backend_processes_with_results(pids, backend_dir=backend_dir)
+        status_code = 200 if shutdown_result.get("ok") else 500
+        return JsonResponse(shutdown_result, status=status_code)
 
     except Exception as e:
         return JsonResponse({"ok": False, "error": str(e)}, status=500)

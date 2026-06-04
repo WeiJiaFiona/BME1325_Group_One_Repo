@@ -63,6 +63,24 @@ class TestSendSimCommand(TestCase):
         self.assertFalse(data.get("ok"))
 
 
+class TestForceShutdownEndpoint(TestCase):
+    def test_force_shutdown_returns_structured_results(self):
+        with patch("translator.views._shutdown_backend_processes_with_results", return_value={
+            "ok": False,
+            "results": [{"pid": 55288, "status": "access_denied", "method": "taskkill"}],
+            "surviving_pids": [55288],
+        }):
+            response = self.client.post(
+                "/force_shutdown/",
+                data=json.dumps({"pid": 55288}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 500)
+        data = json.loads(response.content)
+        self.assertFalse(data["ok"])
+        self.assertEqual(data["results"][0]["status"], "access_denied")
+
+
 class TestProcessEnvironmentEndpoint(TestCase):
     def test_process_environment_writes_snapshot(self):
         with tempfile.TemporaryDirectory() as storage_dir, tempfile.TemporaryDirectory() as temp_dir:
@@ -418,6 +436,75 @@ class TestDashboardRuntimeSync(TestCase):
             self.assertFalse(data["runtime_sync"]["in_sync"])
             self.assertIn("backend_health", data)
 
+    def test_live_dashboard_returns_failure_metrics_when_present(self):
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as storage_dir:
+            sim_code = "failure-present"
+
+            def fake_temp_path(*parts):
+                return os.path.join(temp_dir, *parts)
+
+            def fake_storage_path(*parts):
+                return os.path.join(storage_dir, *parts)
+
+            os.makedirs(os.path.join(storage_dir, sim_code), exist_ok=True)
+            with open(os.path.join(temp_dir, "curr_sim_code.json"), "w", encoding="utf-8") as f:
+                json.dump({"sim_code": sim_code}, f)
+            with open(os.path.join(storage_dir, sim_code, "sim_status.json"), "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "step": 2,
+                        "resources": {
+                            "failure_rate": 0.2,
+                            "failed_patients_count": 3,
+                            "system_failed": True,
+                            "failure_reason_counts": {"boarding_timeout": 2},
+                        },
+                        "system_health": {"failed": True},
+                    },
+                    f,
+                )
+
+            with patch("translator.views._temp_path", side_effect=fake_temp_path), \
+                 patch("translator.views._storage_path", side_effect=fake_storage_path):
+                response = self.client.get("/api/live_dashboard/")
+
+            self.assertEqual(response.status_code, 200)
+            payload = json.loads(response.content)
+            self.assertEqual(payload["resources"]["failure_rate"], 0.2)
+            self.assertEqual(payload["resources"]["failed_patients_count"], 3)
+            self.assertTrue(payload["resources"]["system_failed"])
+            self.assertEqual(payload["resources"]["failure_reason_counts"], {"boarding_timeout": 2})
+            self.assertTrue(payload["system_health"]["failed"])
+
+    def test_live_dashboard_failure_metrics_fallback_does_not_500(self):
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as storage_dir:
+            sim_code = "failure-fallback"
+
+            def fake_temp_path(*parts):
+                return os.path.join(temp_dir, *parts)
+
+            def fake_storage_path(*parts):
+                return os.path.join(storage_dir, *parts)
+
+            os.makedirs(os.path.join(storage_dir, sim_code), exist_ok=True)
+            with open(os.path.join(temp_dir, "curr_sim_code.json"), "w", encoding="utf-8") as f:
+                json.dump({"sim_code": sim_code}, f)
+            with open(os.path.join(storage_dir, sim_code, "sim_status.json"), "w", encoding="utf-8") as f:
+                json.dump({"step": 2, "resources": {}}, f)
+
+            with patch("translator.views._temp_path", side_effect=fake_temp_path), \
+                 patch("translator.views._storage_path", side_effect=fake_storage_path):
+                response = self.client.get("/api/live_dashboard/")
+
+            self.assertEqual(response.status_code, 200)
+            payload = json.loads(response.content)
+            self.assertEqual(payload["resources"]["failure_rate"], 0.0)
+            self.assertEqual(payload["resources"]["failed_patients_count"], 0)
+            self.assertFalse(payload["resources"]["system_failed"])
+            self.assertEqual(payload["resources"]["failure_reason_counts"], {})
+            self.assertIn("system_health", payload)
+            self.assertFalse(payload["system_health"]["failed"])
+
 
 class TestHomeRuntimeMessaging(TestCase):
     def test_home_page_labels_command_console_and_data_source_note(self):
@@ -664,7 +751,6 @@ class TestSaveSimulationSettings(TestCase):
 
 
 class TestStartBackendSingleInstance(TestCase):
-    @patch("translator.views._list_running_reverie_processes", return_value=[4321, 8765])
     @patch("translator.views._runtime_backend_health", return_value={
         "backend_alive": True,
         "running_pids": [4321, 8765],
@@ -675,8 +761,16 @@ class TestStartBackendSingleInstance(TestCase):
         "progress_age_seconds": None,
         "stalled": False,
     })
+    @patch("translator.views.detect_running_backend_state", return_value={
+        "backend_alive": True,
+        "running_pids": [4321, 8765],
+        "running_target": "curr_sim",
+        "requested_target": "curr_sim",
+        "target_matches": True,
+        "curr_sim_code": "curr_sim",
+    })
     @patch("translator.views._resolve_backend_dir")
-    def test_start_backend_reuses_existing_reverie_process(self, mock_backend_dir, mock_health, mock_running):
+    def test_start_backend_reuses_existing_reverie_process(self, mock_backend_dir, mock_state, mock_health):
         with tempfile.TemporaryDirectory() as backend_dir:
             mock_backend_dir.return_value = Path(backend_dir)
             response = self.client.post("/start_backend/ed_sim_n5/curr_sim/")

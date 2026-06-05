@@ -40,6 +40,8 @@ import pathlib
 import uuid
 
 
+from downstream_units.disposition_target_resolver import DispositionTargetResolver
+from downstream_units.transfer_broker import TransferBroker, resolve_downstream_profile
 from wait_time_utils import (
     _load_ctas_wait_config,
     _sample_wait_minutes,
@@ -47,6 +49,7 @@ from wait_time_utils import (
 )
 from week7_logic import effective_arrival_rate
 from failure_metrics import collect_failure_metrics
+from runtime_evidence import accumulate_queue_exposure, ensure_queue_exposure
 
 
 current_file = os.path.abspath(__file__)
@@ -528,13 +531,23 @@ class ReverieServer:
     print ("(reverie): Current time: ", self.curr_time)
     # <sec_per_step> denotes the number of seconds in game time that each 
     # step moves foward. 
-    self.sec_per_step = reverie_meta['sec_per_step']
+    configured_minutes_per_step = int(reverie_meta.get("time_scale_minutes_per_step", 1) or 1)
+    if configured_minutes_per_step not in {1, 2}:
+      raise ValueError(f"Unsupported time_scale_minutes_per_step={configured_minutes_per_step}; expected 1 or 2.")
+    self.time_scale_minutes_per_step = configured_minutes_per_step
+    reverie_meta["time_scale_minutes_per_step"] = configured_minutes_per_step
+    self.sec_per_step = int(reverie_meta.get('sec_per_step', configured_minutes_per_step * 60) or configured_minutes_per_step * 60)
+    expected_sec_per_step = configured_minutes_per_step * 60
+    if int(self.sec_per_step) != expected_sec_per_step:
+      self.sec_per_step = expected_sec_per_step
+      reverie_meta["sec_per_step"] = expected_sec_per_step
 
     travel_speed_mps = reverie_meta.get("travel_speed_mps")
     travel_seconds_per_tile = reverie_meta.get("travel_seconds_per_tile")
     travel_minutes_per_tile = reverie_meta.get("travel_minutes_per_tile")
     meters_per_tile = reverie_meta.get("meters_per_tile", 1)
     self.travel_minutes_per_tile = 0.0
+    self.sim_folder = sim_folder
     if travel_minutes_per_tile is not None:
       try:
         self.travel_minutes_per_tile = float(travel_minutes_per_tile)
@@ -581,12 +594,19 @@ class ReverieServer:
     self.arrival_profile_mode = str(reverie_meta.get("arrival_profile_mode", "normal")).strip().lower()
     if self.arrival_profile_mode not in {"normal", "surge", "burst"}:
       self.arrival_profile_mode = "normal"
+    self.hospital_profile_name = str(reverie_meta.get("hospital_profile_name", "") or "").strip() or None
+    downstream_profile = resolve_downstream_profile(self.hospital_profile_name)
     self.lab_capacity = max(1, int(reverie_meta.get("lab_capacity", 2) or 2))
     self.lab_turnaround_minutes = float(reverie_meta.get("lab_turnaround_minutes", 20) or 20)
     default_imaging_capacity = self.maze.injuries_zones["diagnostic room"]["capacity"]
     self.imaging_capacity = max(1, int(reverie_meta.get("imaging_capacity", default_imaging_capacity) or default_imaging_capacity))
     self.imaging_turnaround_minutes = float(reverie_meta.get("imaging_turnaround_minutes", 45) or 45)
-    self.boarding_timeout_minutes = float(reverie_meta.get("boarding_timeout_minutes", 240) or 240)
+    self.boarding_timeout_minutes = float(
+      reverie_meta.get(
+        "boarding_timeout_minutes",
+        downstream_profile.get("boarding_timeout_minutes", 240),
+      ) or 240
+    )
     self.status_interval_steps = max(1, int(reverie_meta.get("status_interval_steps", self._STATUS_INTERVAL) or self._STATUS_INTERVAL))
     self.maze.lab_capacity = self.lab_capacity
     self.maze.imaging_capacity = self.imaging_capacity
@@ -652,7 +672,7 @@ class ReverieServer:
     self.personas_tile = dict()
     
     # Patient time increment for data collection is set according to steps
-    Patient.time_increment = reverie_meta["sec_per_step"] / 60 # In minutes
+    Patient.time_increment = self.time_scale_minutes_per_step # In minutes
     Patient.priority_factor = reverie_meta["priority_factor"]
     # Diagnostic turnaround is configured in minutes, but later code uses
     # random.randint on testing_result_time. Keep the runtime value integral
@@ -685,11 +705,36 @@ class ReverieServer:
     Patient.admission_probability_by_ctas = self.admission_probability_by_ctas
     Patient.admission_boarding_minutes_min = self.admission_boarding_minutes_min
     Patient.admission_boarding_minutes_max = self.admission_boarding_minutes_max
+    downstream_overrides = {
+      "icu_capacity": reverie_meta.get("icu_capacity", downstream_profile.get("icu_capacity", 0)),
+      "ward_capacity": reverie_meta.get("ward_capacity", downstream_profile.get("ward_capacity", 0)),
+      "transfer_turnaround_minutes": reverie_meta.get(
+        "transfer_turnaround_minutes",
+        downstream_profile.get("transfer_turnaround_minutes", 30),
+      ),
+      "boarding_timeout_minutes": reverie_meta.get(
+        "boarding_timeout_minutes",
+        downstream_profile.get("boarding_timeout_minutes", int(self.boarding_timeout_minutes)),
+      ),
+    }
+    transfer_log_path = Path(sim_folder) / "analysis" / "transfer_requests.jsonl"
+    self.transfer_broker = TransferBroker.from_profile_name(
+      self.hospital_profile_name or "default",
+      minutes_per_step=self.time_scale_minutes_per_step,
+      request_log_path=transfer_log_path,
+      profile_overrides=downstream_overrides,
+    )
+    self.disposition_target_resolver = DispositionTargetResolver(
+      reverie_meta.get("disposition_target_probabilities")
+    )
+    Patient.transfer_broker = self.transfer_broker
+    Patient.disposition_target_resolver = self.disposition_target_resolver
 
     # Headless mode: skip file-based frontend sync for faster batch runs
     self.headless = False
     # Write movement/{step}.json each step (disable for pure logic/data runs)
     self.write_movement = True
+    self.queue_trace_path = Path(sim_folder) / "analysis" / "queue_trace_by_step.jsonl"
 
     Triage_Nurse.priority_factor = reverie_meta["priority_factor"]
 
@@ -789,6 +834,8 @@ class ReverieServer:
 
       # Create an instance of the determined class
       curr_persona = PersonaClass(persona_name[0], persona_folder, role=persona_name[1], seed=self.seed)
+      if getattr(curr_persona, "role", None) == "Patient":
+        curr_persona.scratch.time_scale_minutes_per_step = self.time_scale_minutes_per_step
       _assign_wait_targets(curr_persona, self.ctas_wait_config, self.curr_time, self.surge_multiplier)
 
 
@@ -1342,6 +1389,84 @@ class ReverieServer:
   # ------------------------------------------------------------------
   _STATUS_INTERVAL = 1  # live UI expects sim_status.json to track every step
 
+  def _queue_snapshot_payload(self):
+    lab_waiting = 0
+    imaging_waiting = 0
+    boarding_patient_count = 0
+    for p in self.personas.values():
+      if getattr(p, "role", None) != "Patient":
+        continue
+      if getattr(p.scratch, "state", None) == "WAITING_FOR_TEST":
+        if getattr(p.scratch, "testing_kind", None) == "lab":
+          lab_waiting += 1
+        else:
+          imaging_waiting += 1
+      if getattr(p.scratch, "state", None) == "ADMITTED_BOARDING":
+        boarding_patient_count += 1
+    return {
+      "step": int(self.step),
+      "minute": int(self.step * self.time_scale_minutes_per_step),
+      "doctor_queue_len": int(len(self.maze.patients_waiting_for_doctor)),
+      "triage_queue_len": int(len(self.maze.triage_queue)),
+      "bedside_nurse_waiting_len": int(len(self.maze.injuries_zones.get("bedside_nurse_waiting", []))),
+      "lab_queue_len": int(lab_waiting),
+      "imaging_queue_len": int(imaging_waiting),
+      "boarding_patient_count": int(boarding_patient_count),
+    }
+
+  def _write_queue_trace(self, sim_folder):
+    snapshot = self._queue_snapshot_payload()
+    self.queue_trace_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(self.queue_trace_path, "a", encoding="utf-8") as handle:
+      handle.write(json.dumps(snapshot, ensure_ascii=False) + "\n")
+    return snapshot
+
+  def _update_patient_queue_exposure(self):
+    snapshot = self._queue_snapshot_payload()
+    doctor_queue = list(self.maze.patients_waiting_for_doctor)
+    bedside_queue = list(self.maze.injuries_zones.get("bedside_nurse_waiting", []))
+    for patient in self.personas.values():
+      if getattr(patient, "role", None) != "Patient":
+        continue
+      patient.ensure_queue_exposure_payload()
+      name = patient.name
+      in_doctor_queue = any(isinstance(entry, (list, tuple)) and len(entry) >= 2 and str(entry[1]).strip() == name for entry in doctor_queue)
+      if in_doctor_queue:
+        accumulate_queue_exposure(
+          patient.scratch.__dict__,
+          queue_name="doctor",
+          queue_len=snapshot["doctor_queue_len"],
+          threshold=int((self.reverie_meta or {}).get("doctor_queue_overflow_threshold", 20) or 20),
+          minutes_per_step=self.time_scale_minutes_per_step,
+        )
+      in_bedside_queue = any(isinstance(entry, (list, tuple)) and len(entry) >= 2 and str(entry[1]).strip() == name for entry in bedside_queue)
+      if in_bedside_queue:
+        accumulate_queue_exposure(
+          patient.scratch.__dict__,
+          queue_name="bedside_nurse",
+          queue_len=snapshot["bedside_nurse_waiting_len"],
+          threshold=int((self.reverie_meta or {}).get("bedside_nurse_queue_overflow_threshold", 10) or 10),
+          minutes_per_step=self.time_scale_minutes_per_step,
+        )
+      if getattr(patient.scratch, "state", None) == "WAITING_FOR_TEST":
+        testing_kind = getattr(patient.scratch, "testing_kind", None)
+        if testing_kind == "lab":
+          accumulate_queue_exposure(
+            patient.scratch.__dict__,
+            queue_name="lab",
+            queue_len=snapshot["lab_queue_len"],
+            threshold=int((self.reverie_meta or {}).get("lab_queue_overflow_threshold", 15) or 15),
+            minutes_per_step=self.time_scale_minutes_per_step,
+          )
+        else:
+          accumulate_queue_exposure(
+            patient.scratch.__dict__,
+            queue_name="imaging",
+            queue_len=snapshot["imaging_queue_len"],
+            threshold=int((self.reverie_meta or {}).get("imaging_queue_overflow_threshold", 10) or 10),
+            minutes_per_step=self.time_scale_minutes_per_step,
+          )
+
   def _write_sim_status(self, sim_folder):
     """Write a human-readable status snapshot so operators can monitor a
     headless run.  Output goes to  <sim_folder>/sim_status.txt ."""
@@ -1383,6 +1508,7 @@ class ReverieServer:
     lab_waiting = 0
     imaging_waiting = 0
     boarding_timeout_events = 0
+    boarding_patient_count = 0
     for p in self.personas.values():
       if getattr(p, "role", None) != "Patient":
         continue
@@ -1391,10 +1517,26 @@ class ReverieServer:
           lab_waiting += 1
         else:
           imaging_waiting += 1
+      if (
+        getattr(p.scratch, "state", None) == "ADMITTED_BOARDING"
+        and str(getattr(p.scratch, "transfer_status", "") or "").lower() == "pending"
+      ):
+        boarding_patient_count += 1
     for pdata in self.data_collection.get("Patient", {}).values():
       timeout_event = pdata.get("boarding_timeout_event", {})
       if isinstance(timeout_event, dict) and timeout_event.get("occurred", False):
         boarding_timeout_events += 1
+    downstream_summary = self.transfer_broker.runtime_summary() if self.transfer_broker else {
+      "icu_capacity": 0,
+      "icu_occupancy": 0,
+      "ward_capacity": 0,
+      "ward_occupancy": 0,
+      "transfer_request_count": 0,
+      "accepted_transfer_count": 0,
+      "pending_transfer_count": 0,
+    }
+    downstream_summary["boarding_patient_count"] = int(boarding_patient_count)
+    downstream_summary["boarding_timeout_events"] = int(boarding_timeout_events)
 
     # --- Doctor utilisation ---
     doctors_free = len(self.maze.doctors_taking_more_patients)
@@ -1477,6 +1619,9 @@ class ReverieServer:
     lines.append(f"    Lab in progress          {lab_in_progress:>4} / {self.lab_capacity}")
     lines.append(f"    Imaging in progress      {imaging_in_progress:>4} / {self.imaging_capacity}")
     lines.append(f"    Boarding timeout events   {boarding_timeout_events:>4}")
+    lines.append(f"    ICU occupancy             {downstream_summary['icu_occupancy']:>4} / {downstream_summary['icu_capacity']}")
+    lines.append(f"    Ward occupancy            {downstream_summary['ward_occupancy']:>4} / {downstream_summary['ward_capacity']}")
+    lines.append(f"    Pending transfers         {downstream_summary['pending_transfer_count']:>4}")
     lines.append("")
     lines.append(f"  NURSES  (20 total)")
     lines.append("  " + "-" * 40)
@@ -1523,6 +1668,7 @@ class ReverieServer:
       },
       "resources": {
         "arrival_profile_mode": self.arrival_profile_mode,
+        "time_scale_minutes_per_step": self.time_scale_minutes_per_step,
         "lab_in_progress": lab_in_progress,
         "lab_capacity": self.lab_capacity,
         "lab_turnaround_minutes": self.lab_turnaround_minutes,
@@ -1531,7 +1677,17 @@ class ReverieServer:
         "imaging_turnaround_minutes": self.imaging_turnaround_minutes,
         "boarding_timeout_events": boarding_timeout_events,
         "boarding_timeout_minutes": self.boarding_timeout_minutes,
+        "downstream_icu_capacity": downstream_summary["icu_capacity"],
+        "downstream_icu_occupancy": downstream_summary["icu_occupancy"],
+        "downstream_ward_capacity": downstream_summary["ward_capacity"],
+        "downstream_ward_occupancy": downstream_summary["ward_occupancy"],
+        "downstream_transfer_request_count": downstream_summary["transfer_request_count"],
+        "downstream_accepted_transfer_count": downstream_summary["accepted_transfer_count"],
+        "downstream_pending_transfer_count": downstream_summary["pending_transfer_count"],
+        "downstream_boarding_patient_count": downstream_summary["boarding_patient_count"],
+        "downstream_boarding_timeout_events": downstream_summary["boarding_timeout_events"],
       },
+      "downstream": downstream_summary,
       "nurse_status": nurse_status,
       "doctor_assigned": doctor_assigned,
       "doctors_total": len(doctor_assigned),
@@ -1738,6 +1894,7 @@ class ReverieServer:
     reverie_meta["start_date"] = self.start_time.strftime("%B %d, %Y")
     reverie_meta["curr_time"] = self.curr_time.strftime("%B %d, %Y, %H:%M:%S")
     reverie_meta["sec_per_step"] = self.sec_per_step
+    reverie_meta["time_scale_minutes_per_step"] = self.time_scale_minutes_per_step
     reverie_meta["maze_name"] = self.maze.maze_name
     reverie_meta["patient_walkout_probability"] = self.patient_walkout_probability
     reverie_meta["patient_walkout_check_minutes"] = self.patient_walkout_check_minutes
@@ -1766,6 +1923,11 @@ class ReverieServer:
     reverie_meta["admission_probability_by_ctas"] = self.admission_probability_by_ctas
     reverie_meta["admission_boarding_minutes_min"] = self.admission_boarding_minutes_min
     reverie_meta["admission_boarding_minutes_max"] = self.admission_boarding_minutes_max
+    reverie_meta["hospital_profile_name"] = self.hospital_profile_name
+    if self.transfer_broker is not None:
+      reverie_meta["icu_capacity"] = self.transfer_broker.icu_unit.capacity
+      reverie_meta["ward_capacity"] = self.transfer_broker.ward_unit.capacity
+      reverie_meta["transfer_turnaround_minutes"] = self.transfer_broker.transfer_turnaround_minutes
 
     # Save name and role into meta file
     persona_list = []
@@ -2576,6 +2738,8 @@ class ReverieServer:
             self._boost_overdue_patients()
             self._check_triage_timeouts()
             self._process_preloaded_departures()
+            self._update_patient_queue_exposure()
+            self._write_queue_trace(sim_folder)
             self._write_sim_status(sim_folder)
 
             # Add new Patient based on threshold when it's over or equal to one
@@ -3276,6 +3440,9 @@ class ReverieServer:
     )
 
     _assign_wait_targets(curr_persona, self.ctas_wait_config, self.curr_time, self.surge_multiplier)
+    if getattr(curr_persona, "role", None) == "Patient":
+      curr_persona.scratch.time_scale_minutes_per_step = self.time_scale_minutes_per_step
+      curr_persona.stamp_ed_arrival(self.step)
 
 
     self.personas[curr_persona.name] = curr_persona

@@ -7,7 +7,9 @@ import bisect
 sys.path.append('../../')
 import utils
 from persona.persona import *
+from downstream_units.disposition_target_resolver import DispositionTargetResolver
 from persona.memory_structures.scratch_types.patient_scratch import patient_scratch
+from runtime_evidence import ensure_queue_exposure, stamp_event
 from week7_logic import boarding_timeout_reached, testing_kind_for_ctas
 
 
@@ -47,6 +49,8 @@ class Patient(Persona):
     lab_turnaround_minutes = 20
     imaging_turnaround_minutes = 45
     boarding_timeout_minutes = 240
+    transfer_broker = None
+    disposition_target_resolver = None
     walkout_states = {
         "WAITING_FOR_TRIAGE",
         "TRIAGE",
@@ -77,6 +81,41 @@ class Patient(Persona):
         if not curr_time:
             return None
         return int(curr_time.timestamp() // 60)
+
+    def _minutes_per_step(self) -> int:
+        return int(getattr(self.scratch, "time_scale_minutes_per_step", 1) or 1)
+
+    def _runtime_step(self) -> int:
+        return int(getattr(self, "runtime_step", 0) or 0)
+
+    def _minute_for_step(self, step: int) -> int:
+        return int(step) * self._minutes_per_step()
+
+    def _stamp_event(self, event_name: str, curr_step: int) -> None:
+        stamp_event(self.scratch.__dict__, event_name, curr_step, self._minutes_per_step())
+
+    def stamp_ed_arrival(self, curr_step: int) -> None:
+        if self.scratch.ed_arrival_minute is None:
+            self._stamp_event("ed_arrival", curr_step)
+
+    def stamp_triage_completed(self, curr_step: int) -> None:
+        if self.scratch.triage_completed_minute is None:
+            self._stamp_event("triage_completed", curr_step)
+
+    def stamp_first_doctor_contact(self, curr_step: int) -> None:
+        if self.scratch.first_doctor_contact_minute is None:
+            self._stamp_event("first_doctor_contact", curr_step)
+
+    def stamp_ed_exit(self, curr_step: int, disposition_status: str) -> None:
+        if self.scratch.ed_exit_minute is None:
+            self._stamp_event("ed_exit", curr_step)
+        if self.scratch.care_completed_minute is None:
+            self._stamp_event("care_completed", curr_step)
+        self.scratch.disposition_status = disposition_status
+
+    def ensure_queue_exposure_payload(self):
+        self.scratch.queue_exposure = ensure_queue_exposure(self.scratch.__dict__)
+        return self.scratch.queue_exposure
 
     def queue_conversation_event(self, event_name):
         if not event_name:
@@ -166,6 +205,135 @@ class Patient(Persona):
         if self.name in diag_patients:
             diag_patients.remove(self.name)
 
+    def _downstream_target(self) -> str:
+        resolver = getattr(self.__class__, "disposition_target_resolver", None) or DispositionTargetResolver()
+        return resolver.resolve(ctas_level=self.scratch.CTAS, admitted=True, rng=random)
+
+    def _transfer_reason(self, target: str) -> str:
+        return "critical_care_needed" if str(target).upper() == "ICU" else "inpatient_admission_needed"
+
+    def _transfer_summary(self, target: str) -> str:
+        return f"ED disposition to {str(target).upper()} for CTAS {self.scratch.CTAS or 'unknown'} patient"
+
+    def _legacy_random_boarding(self):
+        self.scratch.admitted_to_hospital = True
+        self.scratch.admission_boarding_start = self.scratch.curr_time
+        self.scratch.boarding_timeout_recorded = False
+        self.scratch.boarding_timeout_at = None
+        self.scratch.boarding_timeout_step = None
+        self.scratch.boarding_timeout_minute = None
+        boarding_minutes = random.uniform(
+            self.admission_boarding_minutes_min,
+            self.admission_boarding_minutes_max,
+        )
+        self.scratch.admission_boarding_end = (
+            self.scratch.curr_time + timedelta(minutes=boarding_minutes)
+        )
+        self.scratch.state = "ADMITTED_BOARDING"
+        self.scratch.disposition_status = "admit"
+        self.scratch.next_step = (
+            f"ed map:emergency department:{self.scratch.injuries_zone}:bed"
+        )
+        self.queue_conversation_event(self.EVENT_DISPOSITION_CHANGED)
+        return True
+
+    def _request_downstream_transfer(self, target: str):
+        broker = getattr(self.__class__, "transfer_broker", None)
+        if broker is None:
+            return None
+        current_step = self._runtime_step()
+        response = broker.request_transfer(
+            encounter_id=self.scratch.user_encounter_id or self.name,
+            patient_id=self.scratch.user_patient_id or self.name,
+            from_group="ED",
+            to_group=str(target).upper(),
+            from_unit="ED",
+            to_unit=str(target).upper(),
+            request_step=current_step,
+            request_minute=self._minute_for_step(current_step),
+            ctas_level=self.scratch.CTAS,
+            reason=self._transfer_reason(target),
+            summary=self._transfer_summary(target),
+            requested_resources=["bed"],
+            transfer_id=self.scratch.transfer_request_id,
+        )
+        self.scratch.transfer_request_id = response.transfer_id
+        self.scratch.transfer_status = response.status
+        self.scratch.transfer_next_check_step = response.next_check_step
+        self.scratch.transfer_next_check_minute = response.next_check_minute
+        self.scratch.transfer_completed_step = response.transfer_completed_step
+        self.scratch.transfer_completed_minute = response.transfer_completed_minute
+        self.scratch.assigned_downstream_bed = response.assigned_bed
+        return response
+
+    def _apply_pending_transfer(self, response) -> None:
+        current_step = self._runtime_step()
+        self.scratch.admitted_to_hospital = True
+        self.scratch.transfer_status = "pending"
+        self.scratch.boarding_timeout_recorded = False
+        self.scratch.boarding_timeout_at = None
+        self.scratch.boarding_timeout_step = None
+        self.scratch.boarding_timeout_minute = None
+        if self.scratch.admission_boarding_start is None:
+            self.scratch.admission_boarding_start = self.scratch.curr_time
+        if self.scratch.boarding_started_minute is None:
+            self.scratch.boarding_started_step = current_step
+            self.scratch.boarding_started_minute = self._minute_for_step(current_step)
+        self.scratch.admission_boarding_end = None
+        self.scratch.state = "ADMITTED_BOARDING"
+        self.scratch.disposition_status = "admit"
+        self.scratch.next_step = (
+            f"ed map:emergency department:{self.scratch.injuries_zone}:bed"
+        )
+        self.queue_conversation_event(self.EVENT_DISPOSITION_CHANGED)
+
+    def _apply_accepted_transfer(self, response, target: str) -> None:
+        self.scratch.admitted_to_hospital = True
+        self.scratch.transfer_status = "accepted"
+        if self.scratch.admission_boarding_start is None:
+            self.scratch.admission_boarding_start = self.scratch.curr_time
+        self.scratch.admission_boarding_end = (
+            self.scratch.curr_time + timedelta(minutes=int(response.expected_eta_minutes or 0))
+        )
+        self.scratch.state = "ADMITTED_BOARDING"
+        self.scratch.disposition_status = "admit"
+        self.scratch.next_step = (
+            f"ed map:emergency department:{self.scratch.injuries_zone}:bed"
+        )
+        if str(target).upper() == "ICU":
+            self.scratch.icu_admit_step = response.transfer_completed_step
+            self.scratch.icu_admit_minute = response.transfer_completed_minute
+            self.scratch.ward_transfer_step = None
+            self.scratch.ward_transfer_minute = None
+        else:
+            self.scratch.ward_transfer_step = response.transfer_completed_step
+            self.scratch.ward_transfer_minute = response.transfer_completed_minute
+            self.scratch.icu_admit_step = None
+            self.scratch.icu_admit_minute = None
+        self.queue_conversation_event(self.EVENT_DISPOSITION_CHANGED)
+        self.mark_handoff()
+
+    def _maybe_retry_pending_transfer(self):
+        if self.scratch.state != "ADMITTED_BOARDING":
+            return
+        if str(getattr(self.scratch, "transfer_status", "") or "").lower() != "pending":
+            return
+        next_check_minute = getattr(self.scratch, "transfer_next_check_minute", None)
+        if next_check_minute is None:
+            return
+        current_minute = self._minute_for_step(self._runtime_step())
+        if current_minute < int(next_check_minute):
+            return
+        if not self.scratch.disposition_target:
+            return
+        response = self._request_downstream_transfer(self.scratch.disposition_target)
+        if response is None:
+            return
+        if response.status == "accepted":
+            self._apply_accepted_transfer(response, self.scratch.disposition_target)
+        else:
+            self._apply_pending_transfer(response)
+
 
     def move(self, maze, personas, curr_tile, curr_time, data_collection):
         # Area
@@ -190,9 +358,14 @@ class Patient(Persona):
         data_collection.setdefault("boarding_timeout_event", {"occurred": False})
         data_collection.setdefault("testing_kind", self.scratch.testing_kind)
 
+        self.scratch.curr_tile = curr_tile
+        self.scratch.curr_time = curr_time
+        self._maybe_retry_pending_transfer()
+
         if (
             self.scratch.state == "ADMITTED_BOARDING"
             and not self.scratch.boarding_timeout_recorded
+            and str(getattr(self.scratch, "transfer_status", "") or "").lower() != "accepted"
             and boarding_timeout_reached(
                 self.scratch.admission_boarding_start,
                 curr_time,
@@ -201,6 +374,8 @@ class Patient(Persona):
         ):
             self.scratch.boarding_timeout_recorded = True
             self.scratch.boarding_timeout_at = curr_time
+            self.scratch.boarding_timeout_step = self._runtime_step()
+            self.scratch.boarding_timeout_minute = self._minute_for_step(self.scratch.boarding_timeout_step)
             data_collection["boarding_timeout_event"] = {
                 "occurred": True,
                 "timestamp": curr_time.strftime("%B %d, %Y, %H:%M:%S"),
@@ -265,10 +440,7 @@ class Patient(Persona):
 
 
         # plan = super().move(maze, personas, curr_tile, curr_time, data_collection)
-        self.scratch.curr_tile = curr_tile
         print("curr_tile",curr_tile)
-
-        self.scratch.curr_time = curr_time
 
         #Check for available doctor and assign if there isn't one already assigned and patient isn't waiting for triage or waiting for nurse
         # if(not self.scratch.assigned_doctor and self.scratch.state not in ["WAITING_FOR_TRIAGE", "TRIAGE", "WAITING_FOR_NURSE", "LEAVING"] 
@@ -602,6 +774,7 @@ class Patient(Persona):
 
         self.scratch.act_path_set = False
         self.scratch.initial_assessment_done = True
+        self.stamp_first_doctor_contact(int(getattr(self, "runtime_step", 0) or 0))
         self.queue_conversation_event(self.EVENT_DOCTOR_FIRST_ASSESS)
 
         if self.scratch.stage2_minutes is None:
@@ -672,44 +845,43 @@ class Patient(Persona):
         if self.simulate_hospital_admission and self.admission_probability_by_ctas:
             ctas_key = str(self.scratch.CTAS) if self.scratch.CTAS else "3"
             admit_prob = float(self.admission_probability_by_ctas.get(ctas_key, 0.0))
-            if random.random() < admit_prob:
-                self.scratch.admitted_to_hospital = True
+            admitted = random.random() < admit_prob
+            if admitted:
+                current_step = self._runtime_step()
+                self.scratch.decision_to_admit_step = current_step
+                self.scratch.decision_to_admit_minute = self._minute_for_step(current_step)
                 self.scratch.admission_boarding_start = self.scratch.curr_time
-                self.scratch.boarding_timeout_recorded = False
-                self.scratch.boarding_timeout_at = None
-                boarding_minutes = random.uniform(
-                    self.admission_boarding_minutes_min,
-                    self.admission_boarding_minutes_max,
-                )
-                self.scratch.admission_boarding_end = (
-                    self.scratch.curr_time + timedelta(minutes=boarding_minutes)
-                )
-                self.scratch.state = "ADMITTED_BOARDING"
-                self.scratch.next_step = (
-                    f"ed map:emergency department:{self.scratch.injuries_zone}:bed"
-                )
-                self.queue_conversation_event(self.EVENT_DISPOSITION_CHANGED)
+                target = self._downstream_target()
+                self.scratch.disposition_target = target
+                response = self._request_downstream_transfer(target)
+                if response is None:
+                    self._legacy_random_boarding()
+                elif response.status == "accepted":
+                    self._apply_accepted_transfer(response, target)
+                else:
+                    self._apply_pending_transfer(response)
                 utils.log_runtime_event(
-                    "patient entered admitted boarding",
+                    "patient disposition entered downstream transfer flow",
                     sim_code=utils.static_sim_code,
                     extra={
                         "patient": self.name,
                         "ctas": self.scratch.CTAS,
-                        "boarding_start": self.scratch.admission_boarding_start.strftime("%B %d, %Y, %H:%M:%S"),
-                        "boarding_end": self.scratch.admission_boarding_end.strftime("%B %d, %Y, %H:%M:%S"),
+                        "target": self.scratch.disposition_target,
+                        "transfer_request_id": self.scratch.transfer_request_id,
+                        "transfer_status": self.scratch.transfer_status,
                     },
                 )
                 memory_hook_manager = getattr(self, "auto_memory_hook_manager", None)
                 if memory_hook_manager is not None:
                     memory_hook_manager.record_disposition_decided(
                         self,
-                        step=int(getattr(self, "runtime_step", 0) or 0),
+                        step=current_step,
                         sim_time=self.scratch.curr_time,
                         disposition="admit",
                     )
                     memory_hook_manager.record_next_slot(
                         self,
-                        step=int(getattr(self, "runtime_step", 0) or 0),
+                        step=current_step,
                         sim_time=self.scratch.curr_time,
                         slot_name="boarding",
                         owner_role="BedsideNurse",
@@ -724,6 +896,7 @@ class Patient(Persona):
             + timedelta(minutes=float(self.scratch.stage3_minutes))
         )
         self.scratch.state = "WAITING_FOR_EXIT"
+        self.scratch.disposition_status = "discharged"
         self.scratch.next_step = (
             f"ed map:emergency department:{self.scratch.injuries_zone}:bed"
         )
@@ -758,6 +931,7 @@ class Patient(Persona):
             # While only in the traige assessment state
             if(self.scratch.state == "TRIAGE"):
                 self.consume_active_conversation_event()
+                self.stamp_triage_completed(int(getattr(self, "runtime_step", 0) or 0))
                 # If talking to Triage Nurse assigned the next room to go to for the Bedside Nurse to take them there 
                 self.scratch.next_room = self.scratch.injuries_zone
 
@@ -873,10 +1047,16 @@ class Patient(Persona):
         temp_dict["admitted_to_hospital"] = {"occurred": False}
         temp_dict["boarding_timeout_event"] = {"occurred": False}
         temp_dict["testing_kind"] = None
+        temp_dict["queue_exposure"] = ensure_queue_exposure({})
         return temp_dict
     
     # Put their data in the data_collection dict
     def save_data(self, dict):
+        if self.scratch.triage_completed_minute is None and self.scratch.state not in {"WAITING_FOR_TRIAGE", "TRIAGE"}:
+            fallback_step = self.scratch.first_doctor_contact_step
+            if fallback_step is None:
+                fallback_step = int(getattr(self, "runtime_step", 0) or 0)
+            self.stamp_triage_completed(int(fallback_step))
 
         dict["ICD-10-CA_code"] = self.scratch.ICD
         dict["CTAS_score"] = self.scratch.CTAS
@@ -885,6 +1065,36 @@ class Patient(Persona):
         dict["stage2_minutes"] = (self.scratch.stage2_minutes or 0) + (self.scratch.stage2_surge_extra or 0)
         dict["stage3_minutes"] = self.scratch.stage3_minutes
         dict["testing_kind"] = self.scratch.testing_kind
+        dict["ed_arrival_step"] = self.scratch.ed_arrival_step
+        dict["ed_arrival_minute"] = self.scratch.ed_arrival_minute
+        dict["ed_arrival_at"] = self.scratch.ed_arrival_minute
+        dict["triage_completed_step"] = self.scratch.triage_completed_step
+        dict["triage_completed_minute"] = self.scratch.triage_completed_minute
+        dict["triage_completed_at"] = self.scratch.triage_completed_minute
+        dict["first_doctor_contact_step"] = self.scratch.first_doctor_contact_step
+        dict["first_doctor_contact_minute"] = self.scratch.first_doctor_contact_minute
+        dict["first_doctor_contact_at"] = self.scratch.first_doctor_contact_minute
+        dict["ed_exit_step"] = self.scratch.ed_exit_step
+        dict["ed_exit_minute"] = self.scratch.ed_exit_minute
+        dict["ed_exit_at"] = self.scratch.ed_exit_minute
+        dict["care_completed_step"] = self.scratch.care_completed_step
+        dict["care_completed_minute"] = self.scratch.care_completed_minute
+        dict["disposition_status"] = self.scratch.disposition_status
+        dict["decision_to_admit_step"] = self.scratch.decision_to_admit_step
+        dict["decision_to_admit_minute"] = self.scratch.decision_to_admit_minute
+        dict["disposition_target"] = self.scratch.disposition_target
+        dict["transfer_request_id"] = self.scratch.transfer_request_id
+        dict["transfer_status"] = self.scratch.transfer_status
+        dict["boarding_started_step"] = self.scratch.boarding_started_step
+        dict["boarding_started_minute"] = self.scratch.boarding_started_minute
+        dict["ward_transfer_step"] = self.scratch.ward_transfer_step
+        dict["ward_transfer_minute"] = self.scratch.ward_transfer_minute
+        dict["icu_admit_step"] = self.scratch.icu_admit_step
+        dict["icu_admit_minute"] = self.scratch.icu_admit_minute
+        dict["boarding_timeout_step"] = self.scratch.boarding_timeout_step
+        dict["boarding_timeout_minute"] = self.scratch.boarding_timeout_minute
+        dict["queue_exposure"] = self.ensure_queue_exposure_payload()
+        dict["time_scale_minutes_per_step"] = self._minutes_per_step()
 
         walkout_entry = dict.setdefault("left_department_by_choice", {"occurred": False})
         if self.scratch.left_without_being_seen:
@@ -922,6 +1132,10 @@ class Patient(Persona):
                 "boarding_end": (self.scratch.admission_boarding_end.strftime("%B %d, %Y, %H:%M:%S")
                                  if self.scratch.admission_boarding_end else None),
                 "boarding_duration_minutes": boarding_duration,
+                "decision_to_admit_minute": self.scratch.decision_to_admit_minute,
+                "disposition_target": self.scratch.disposition_target,
+                "transfer_request_id": self.scratch.transfer_request_id,
+                "transfer_status": self.scratch.transfer_status,
             })
         else:
             admission_entry.setdefault("occurred", False)
@@ -933,6 +1147,7 @@ class Patient(Persona):
                 "timestamp": (self.scratch.boarding_timeout_at.strftime("%B %d, %Y, %H:%M:%S")
                               if self.scratch.boarding_timeout_at else None),
                 "threshold_minutes": float(self.boarding_timeout_minutes),
+                "minute": self.scratch.boarding_timeout_minute,
             })
         else:
             timeout_entry.setdefault("occurred", False)
@@ -945,6 +1160,12 @@ class Patient(Persona):
 
     def leave_ed(self, maze, personas, sim_folder, data_collection=None):
         persona_key = self.name
+        if self.scratch.admitted_to_hospital:
+            self.stamp_ed_exit(int(getattr(self, "runtime_step", 0) or 0), "admitted_and_transferred")
+        elif self.scratch.left_without_being_seen:
+            self.stamp_ed_exit(int(getattr(self, "runtime_step", 0) or 0), "left_without_being_seen")
+        else:
+            self.stamp_ed_exit(int(getattr(self, "runtime_step", 0) or 0), "discharged")
 
         # --- Full cleanup from all queues and zones ---
         # Triage queue

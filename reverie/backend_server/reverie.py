@@ -48,6 +48,7 @@ from wait_time_utils import (
     _assign_wait_targets,
 )
 from week7_logic import effective_arrival_rate
+from bedside_queue_guards import guarded_bedside_reinsert
 from failure_metrics import collect_failure_metrics
 from runtime_evidence import accumulate_queue_exposure, ensure_queue_exposure
 
@@ -1089,14 +1090,17 @@ class ReverieServer:
       if persona.scratch.state == "WAITING_FOR_NURSE":
         if persona.name in nurse_occupied_patients:
           continue
-        nurse_queued = set(entry[1] for entry in self.maze.injuries_zones.get("bedside_nurse_waiting", []))
-        if persona.name not in nurse_queued:
-          ctas = persona.scratch.CTAS if persona.scratch.CTAS else 3
-          bisect.insort_right(
-            self.maze.injuries_zones["bedside_nurse_waiting"],
-            [ctas * Patient.priority_factor, persona.name]
-          )
+        ctas = persona.scratch.CTAS if persona.scratch.CTAS else 3
+        inserted, reason = guarded_bedside_reinsert(
+          queue=self.maze.injuries_zones["bedside_nurse_waiting"],
+          patient=persona,
+          priority=ctas * Patient.priority_factor,
+          data_collection=self.data_collection,
+        )
+        if inserted:
           print(f"(reverie): Re-inserted {persona.name} into bedside_nurse_waiting")
+        elif reason == "reinsert_count_exceeded_warning":
+          print(f"(reverie): Warning - {persona.name} bedside reinsert_count exceeded 3; suppressing repeat reinsert")
 
   def _age_global_doctor_queue(self):
     """
@@ -2667,6 +2671,7 @@ class ReverieServer:
             # This is where the core brains of the personas are invoked. 
             movements = {"persona": dict(), 
                          "meta": dict()}
+            self.maze.assigned_patient_ids_this_step = set()
             for persona_name, persona in list(self.personas.items()): 
               # <next_tile> is a x,y coordinate. e.g., (58, 9)
               # <pronunciatio> is an emoji. e.g., "\ud83d\udca4"

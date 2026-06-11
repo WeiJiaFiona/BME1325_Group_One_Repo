@@ -1048,6 +1048,7 @@ class Patient(Persona):
         temp_dict["boarding_timeout_event"] = {"occurred": False}
         temp_dict["testing_kind"] = None
         temp_dict["queue_exposure"] = ensure_queue_exposure({})
+        temp_dict["bedside_reinsert_count"] = int(getattr(self.scratch, "bedside_reinsert_count", 0) or 0)
         return temp_dict
     
     # Put their data in the data_collection dict
@@ -1094,6 +1095,7 @@ class Patient(Persona):
         dict["boarding_timeout_step"] = self.scratch.boarding_timeout_step
         dict["boarding_timeout_minute"] = self.scratch.boarding_timeout_minute
         dict["queue_exposure"] = self.ensure_queue_exposure_payload()
+        dict["bedside_reinsert_count"] = int(getattr(self.scratch, "bedside_reinsert_count", 0) or 0)
         dict["time_scale_minutes_per_step"] = self._minutes_per_step()
 
         walkout_entry = dict.setdefault("left_department_by_choice", {"occurred": False})

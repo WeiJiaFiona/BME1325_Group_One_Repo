@@ -11,6 +11,7 @@ import utils
 sys.path.append('../../')
 from persona.persona import *
 from persona.memory_structures.scratch_types.bedside_nurse_scratch import *
+from bedside_queue_guards import select_bedside_patient_for_assignment
 
 class Bedside_Nurse(Persona):
     testing_time = 0
@@ -213,37 +214,23 @@ class Bedside_Nurse(Persona):
                 selected_patient = None
                 self.scratch.act_path_set = False
                 reserved_bed = None
+                selected_entry = None
 
                 # Check the whole sorted array to see if there is a Patient ready and injuries zone open for another Patient
-                for p_info in maze.injuries_zones["bedside_nurse_waiting"][:]:
-                    curr_persona = personas.get(p_info[1])
-                    if not curr_persona:
-                        maze.injuries_zones["bedside_nurse_waiting"].remove(p_info)
-                        continue
-                    zone = curr_persona.scratch.next_room
-                    if not zone:
-                        maze.injuries_zones["bedside_nurse_waiting"].remove(p_info)
-                        continue
-                    if curr_persona.scratch.state != "WAITING_FOR_NURSE" and curr_persona.scratch.state != "WAITING_FOR_TEST":
-                        maze.injuries_zones["bedside_nurse_waiting"].remove(p_info)
-                        continue
-                    print(p_info)
-                    # Check if injuries zone is open for another Patient and Patient hasn't been selected yet
-                    if(selected_patient == None and zone_has_space(zone)):
-                        reserved_bed = reserve_bed(curr_persona, zone)
-                        if(zone in getattr(maze, "available_beds", {}) and not reserved_bed):
-                            continue
-                        selected_patient = curr_persona
-                        maze.injuries_zones["bedside_nurse_waiting"].remove(p_info)
-
-                    # Increase priority for other Patients based on time waiting only if a Patient has been selected already in the queue
-                    else:
-                        if (p_info[0] > 3):
-                            p_info[0] -= 1
+                selected_patient, selected_entry, reserved_bed = select_bedside_patient_for_assignment(
+                    queue=maze.injuries_zones["bedside_nurse_waiting"],
+                    personas=personas,
+                    zone_has_space=zone_has_space,
+                    reserve_bed=reserve_bed,
+                    assigned_patient_ids_this_step=getattr(maze, "assigned_patient_ids_this_step", set()),
+                    bed_tracked_zones=set(getattr(maze, "available_beds", {}).keys()),
+                )
+                if selected_entry:
+                    print(selected_entry)
                 
                 # Check if a Patient has been found
                 if(selected_patient):
-                    data_collection["Patients_Attended"].append([selected_patient.name, p_info[0]])
+                    data_collection["Patients_Attended"].append([selected_patient.name, selected_entry[0] if selected_entry else None])
 
                     # Add patient to one of the patients in the zones
                     zone = selected_patient.scratch.next_room

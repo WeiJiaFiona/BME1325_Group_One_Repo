@@ -631,6 +631,10 @@ class Patient(Persona):
                     owner_role="BedsideNurse",
                     reason="doctor_ordered_test",
                 )
+                try:
+                    memory_hook_manager.sync_fullview_decision(self, decision_kind="diagnostic")
+                except Exception:
+                    pass
         else:
             # No test — enters WAITING_FOR_RESULT immediately, apply surge extra now
             self.scratch.testing_kind = None
@@ -715,6 +719,10 @@ class Patient(Persona):
                         owner_role="BedsideNurse",
                         reason="patient_admitted_to_hospital",
                     )
+                    try:
+                        memory_hook_manager.sync_fullview_decision(self, decision_kind="admit")
+                    except Exception:
+                        pass
                 return True
 
         if self.scratch.stage3_minutes is None:
@@ -749,6 +757,10 @@ class Patient(Persona):
                 owner_role="Patient",
                 reason="patient_ready_for_exit",
             )
+            try:
+                memory_hook_manager.sync_fullview_decision(self, decision_kind="discharge")
+            except Exception:
+                pass
 
         return True
 

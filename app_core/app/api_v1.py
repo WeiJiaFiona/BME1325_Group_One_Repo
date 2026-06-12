@@ -8,6 +8,8 @@ import json
 import os
 import re
 import uuid
+import urllib.request
+import urllib.error
 
 from app_core.app.llm_adapter import generate_clinical_reply
 from app_core.app.mode_user import start as run_user_mode
@@ -47,8 +49,14 @@ from app_core.his.services.patient_registry_service import register_patient
 from app_core.his.services.triage_service import record_triage
 from app_core.his.storage import create_his_storage
 from app_core.his.storage.base import HisStorage
+from app_core.integration.disposition_rules import decide_ed_disposition
+from app_core.integration.fullview_adapter import sync_user_decision_to_fullview
+from app_core.integration.fullview_mapping import map_user_phase_to_room
+from app_core.integration.fullview_runtime import summarize_sync_result
 from app_core.doctor_rag.bridge import run_bridge
 from app_core.clinical_kb.registry import registry_map
+from app_core.mdt_bridge import build_icu_native_payload, should_trigger_mdt_consult
+from app_core.memory.schema import CurrentEncounterSummary
 
 
 ALLOWED_RECEIVER_SYSTEMS = {"OUTPATIENT", "ICU", "WARD"}
@@ -300,6 +308,7 @@ def _write_his_summary(encounter: Dict[str, Any], *, storage: HisStorage) -> Cur
         "final_state": encounter.get("final_state"),
         "state_trace": list(encounter.get("state_trace", [])),
         "recommended_handoff_target": _infer_default_handoff_target(encounter),
+        "mdt_consult": dict(encounter.get("mdt_consult", {}) or {}),
     }
     summary = CurrentSummaryRecord(
         encounter_id=his_encounter_id,
@@ -311,6 +320,95 @@ def _write_his_summary(encounter: Dict[str, Any], *, storage: HisStorage) -> Cur
         updated_at=_utc_now_iso(),
     )
     return write_current_summary(summary, storage=storage)
+
+
+def _mdt_bridge_enabled() -> bool:
+    return str(os.getenv("MDT_BRIDGE_ENABLED", "0")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _build_encounter_summary_for_mdt(session: Dict[str, Any], encounter: Dict[str, Any]) -> CurrentEncounterSummary:
+    triage = dict(encounter.get("triage", {}) or {})
+    shared = dict(session.get("shared_memory", {}) or {})
+    doctor_assessment = dict(shared.get("doctor_assessment", {}) or {})
+    doctor_data = dict(doctor_assessment.get("doctor_data", {}) or {})
+    complaints = str(shared.get("chief_complaint", "")).strip()
+
+    completed_actions = []
+    if doctor_data.get("onset"):
+        completed_actions.append({"action": "onset_collected"})
+    if doctor_data.get("worsening_pain") is not None:
+        completed_actions.append({"action": "progression_checked"})
+    if doctor_data.get("breathing_difficulty") is not None:
+        completed_actions.append({"action": "breathing_checked"})
+
+    return CurrentEncounterSummary(
+        run_id=str(session.get("run_id", "user_mode")),
+        mode="user",
+        encounter_id=str(encounter.get("encounter_id") or session.get("encounter_id") or ""),
+        patient_id=str(encounter.get("patient_id") or session.get("patient_id") or ""),
+        current_state=str(encounter.get("final_state") or "UNDER_EVALUATION"),
+        current_zone=str(encounter.get("final_state") or "ED"),
+        acuity=str(triage.get("ctas_compat") or 3),
+        latest_vitals=dict(shared.get("vitals", {}) or {}),
+        active_risks=list(shared.get("active_risks", []) or []),
+        pending_tasks=[],
+        completed_actions=completed_actions,
+        latest_doctor_findings={
+            "chief_complaint": complaints,
+            "active_problems": [complaints] if complaints else [],
+            "need_specialist_consult": bool(shared.get("need_specialist_consult", False)),
+        },
+        latest_test_status=dict(shared.get("labs", {}) or {}),
+        source_memory_ids=[],
+        updated_at_step=int(session.get("turn_index") or 0),
+    )
+
+
+def _call_mdt_icu_native(payload: Dict[str, Any]) -> Dict[str, Any]:
+    base_url = str(os.getenv("MDT_BRIDGE_URL", "http://127.0.0.1:9000")).rstrip("/")
+    endpoint = f"{base_url}/api/v1/consultations/icu-native"
+    req = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=float(os.getenv("MDT_BRIDGE_TIMEOUT_SEC", "5"))) as resp:
+        body = resp.read().decode("utf-8")
+        return json.loads(body) if body else {}
+
+
+def _maybe_run_mdt_bridge(session: Dict[str, Any], encounter: Dict[str, Any]) -> None:
+    if not _mdt_bridge_enabled():
+        return
+    summary = _build_encounter_summary_for_mdt(session, encounter)
+    if not should_trigger_mdt_consult(summary):
+        return
+    payload = build_icu_native_payload(summary).to_dict()
+    encounter["mdt_consult"] = {
+        "requested": True,
+        "requested_at": _utc_now_iso(),
+        "request_payload": payload,
+        "status": "PENDING",
+    }
+    try:
+        response = _call_mdt_icu_native(payload)
+        encounter["mdt_consult"].update(
+            {
+                "status": "SUCCESS",
+                "responded_at": _utc_now_iso(),
+                "response": response,
+            }
+        )
+    except Exception as exc:
+        # Fail-open: keep baseline ED flow unchanged if MDT service is down.
+        encounter["mdt_consult"].update(
+            {
+                "status": "FAILED",
+                "responded_at": _utc_now_iso(),
+                "error": str(exc),
+            }
+        )
 
 
 def _sync_encounter_to_his(encounter: Dict[str, Any]) -> None:
@@ -1279,7 +1377,40 @@ def _build_session_payload(session: Dict[str, Any]) -> Dict[str, Any]:
         "handoff_ticket_id": session["handoff_ticket_id"],
         "movement_suggestion": session["movement_suggestion"],
         "memory_version": session.get("memory_version", 0),
+        "fullview_sync": summarize_sync_result(session.get("fullview_sync")),
     }
+
+
+def _sync_user_fullview_disposition(
+    session: Dict[str, Any],
+    encounter: Dict[str, Any],
+    *,
+    current_room_override: Optional[str] = None,
+) -> Dict[str, Any]:
+    his_patient_id, his_encounter_id = _ensure_his_identifiers(encounter)
+    triage = dict(encounter.get("triage", {}) or {})
+    shared = dict(session.get("shared_memory", {}) or {})
+    acuity = str(triage.get("acuity_ad") or "").strip().upper() or None
+    ctas_level = triage.get("ctas_compat") or triage.get("level_1_4") or 3
+    vitals = dict(shared.get("vitals", {}) or {})
+    decision = decide_ed_disposition(acuity=acuity, ctas=ctas_level, vitals=vitals)
+    current_room_id = current_room_override or map_user_phase_to_room(phase=str(session.get("phase") or ""), acuity=acuity)
+    return sync_user_decision_to_fullview(
+        patient_id=his_patient_id,
+        encounter_id=his_encounter_id,
+        patient_name=str(session.get("patient_id") or his_patient_id),
+        chief_complaint=str(shared.get("chief_complaint", "")).strip(),
+        vitals=vitals,
+        ctas_level=ctas_level,
+        acuity=acuity,
+        current_room_id=current_room_id,
+        decision=decision,
+        context={
+            "decision_origin": "user_mode_doctor",
+            "user_phase": session.get("phase"),
+            "public_encounter_id": encounter.get("encounter_id"),
+        },
+    )
 
 
 def _is_green_channel_encounter(encounter: Dict[str, Any]) -> bool:
@@ -2042,6 +2173,7 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                 pass
             else:
                 encounter = _ENCOUNTERS.get(session["encounter_id"], {})
+            _maybe_run_mdt_bridge(session, encounter)
             triage = encounter.get("triage", {})
             acuity = triage.get("acuity_ad", "C")
             assess = session.setdefault("shared_memory", {}).setdefault("doctor_assessment", {})
@@ -2067,6 +2199,11 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                     "target_zone": "bedside_transfer_zone",
                     "instruction": f"Proceed to bedside transfer area for {target} arrangement.",
                 }
+                session["fullview_sync"] = _sync_user_fullview_disposition(
+                    session,
+                    encounter,
+                    current_room_override=map_user_phase_to_room(phase="DOCTOR_CALLED", acuity=acuity),
+                )
                 _sync_user_patient_to_auto(session, enqueue_doctor=False, user_phase="BED_NURSE_FLOW")
                 line = _agent_reply(
                     "DOCTOR",
@@ -2096,6 +2233,11 @@ def user_mode_chat_turn(message: str) -> Dict[str, Any]:
                     "target_zone": "outpatient_exit",
                     "instruction": "You can proceed to outpatient follow-up.",
                 }
+                session["fullview_sync"] = _sync_user_fullview_disposition(
+                    session,
+                    encounter,
+                    current_room_override=map_user_phase_to_room(phase="DOCTOR_CALLED", acuity=acuity),
+                )
                 _sync_user_patient_to_auto(session, enqueue_doctor=False, user_phase="DONE")
                 line = _agent_reply(
                     "DOCTOR",

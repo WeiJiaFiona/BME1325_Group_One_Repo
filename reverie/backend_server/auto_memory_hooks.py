@@ -4,6 +4,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+import os
+import json
+import urllib.request
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -18,6 +21,9 @@ from app_core.his.services.patient_registry_service import register_patient
 from app_core.his.services.triage_service import record_triage
 from app_core.his.storage import create_his_storage
 from app_core.his.storage.base import HisStorage
+from app_core.integration.disposition_rules import decide_ed_disposition, diagnostic_decision, discharge_decision
+from app_core.integration.fullview_adapter import sync_auto_decision_to_fullview
+from app_core.integration.fullview_mapping import map_auto_location_to_room
 from app_core.memory.hooks import (
     build_audit_record,
     build_handoff_snapshot_id,
@@ -28,6 +34,7 @@ from app_core.memory.hooks import (
 )
 from app_core.memory.schema import CurrentEncounterSummary, HandoffMemorySnapshot, MemoryItem
 from app_core.memory.service import MemoryService, create_memory_service
+from app_core.mdt_bridge import build_icu_native_payload, should_trigger_mdt_consult
 
 
 class AutoMemoryHookManager:
@@ -64,6 +71,46 @@ class AutoMemoryHookManager:
             "next_slot": self.record_next_slot,
         }
 
+    def _mdt_bridge_enabled(self) -> bool:
+        return str(os.getenv("MDT_BRIDGE_ENABLED", "0")).strip().lower() in {"1", "true", "yes", "on"}
+
+    def _call_mdt_icu_native(self, payload: dict[str, Any]) -> dict[str, Any]:
+        base_url = str(os.getenv("MDT_BRIDGE_URL", "http://127.0.0.1:9000")).rstrip("/")
+        endpoint = f"{base_url}/api/v1/consultations/icu-native"
+        req = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=float(os.getenv("MDT_BRIDGE_TIMEOUT_SEC", "5"))) as resp:
+            body = resp.read().decode("utf-8")
+            return json.loads(body) if body else {}
+
+    def _maybe_mdt_consult(self, summary: CurrentEncounterSummary, *, encounter_id: str, step: int) -> None:
+        if not self._mdt_bridge_enabled():
+            return
+        if not should_trigger_mdt_consult(summary):
+            return
+        try:
+            payload = build_icu_native_payload(
+                summary,
+                admission_id=f"AUTO-ADM-{encounter_id}",
+                bed_id=str(summary.current_zone or "AUTO-WAIT"),
+            ).to_dict()
+        except Exception as exc:
+            self._log("auto MDT payload build failed", step=step, extra={"encounter_id": encounter_id, "error": str(exc)})
+            return
+        try:
+            response = self._call_mdt_icu_native(payload)
+            self._log(
+                "auto MDT consult success",
+                step=step,
+                extra={"encounter_id": encounter_id, "patient_id": summary.patient_id, "response_keys": sorted(list(response.keys()))},
+            )
+        except Exception as exc:
+            self._log("auto MDT consult failed", step=step, extra={"encounter_id": encounter_id, "error": str(exc)})
+
     @property
     def enabled(self) -> bool:
         return bool(getattr(self.service, "enabled", False))
@@ -76,6 +123,52 @@ class AutoMemoryHookManager:
         if handler is None:
             raise KeyError(f"Unknown auto memory event: {event_name}")
         return handler(*args, **kwargs)
+
+    def ensure_his_ids_for_patient(self, patient: Any) -> tuple[str, str]:
+        encounter_id = generate_auto_encounter_id(self.run_id, getattr(patient, "name", "Unknown patient"))
+        his_ids = self._his_ids.get(encounter_id)
+        if his_ids is None:
+            his_ids = (generate_his_patient_id(), generate_his_encounter_id())
+            self._his_ids[encounter_id] = his_ids
+        return his_ids
+
+    def sync_fullview_decision(self, patient: Any, *, decision_kind: str) -> dict[str, Any]:
+        his_patient_id, his_encounter_id = self.ensure_his_ids_for_patient(patient)
+        scratch = getattr(patient, "scratch", None)
+        chief_complaint = str(getattr(scratch, "ICD", "") or getattr(patient, "name", "")).strip()
+        current_room_id = map_auto_location_to_room(
+            zone=getattr(scratch, "injuries_zone", None),
+            next_room=getattr(scratch, "next_room", None),
+            state=getattr(scratch, "state", None),
+            ctas=getattr(scratch, "CTAS", None),
+        )
+        if decision_kind == "diagnostic":
+            decision = diagnostic_decision()
+        elif decision_kind == "discharge":
+            decision = discharge_decision()
+        else:
+            decision = decide_ed_disposition(
+                acuity=None,
+                ctas=getattr(scratch, "CTAS", None),
+                vitals={},
+            )
+        return sync_auto_decision_to_fullview(
+            patient_id=his_patient_id,
+            encounter_id=his_encounter_id,
+            patient_name=str(getattr(patient, "name", "Unknown patient")),
+            chief_complaint=chief_complaint,
+            vitals={},
+            ctas_level=getattr(scratch, "CTAS", None),
+            acuity=None,
+            current_room_id=current_room_id,
+            decision=decision,
+            context={
+                "decision_origin": "auto_mode",
+                "auto_state": getattr(scratch, "state", None),
+                "auto_zone": getattr(scratch, "injuries_zone", None),
+                "auto_next_room": getattr(scratch, "next_room", None),
+            },
+        )
 
     def sync_existing_patients(self, patients: list[Any], *, step: int, sim_time: datetime | None) -> None:
         for patient in patients:
@@ -572,6 +665,7 @@ class AutoMemoryHookManager:
         summary = self._build_summary(patient, step=step, encounter_id=encounter_id, memory_id=memory_id)
         summary.latest_doctor_findings["disposition"] = payload
         summary.completed_actions.append({"event": "disposition_decided", "step": int(step), "disposition": payload.get("disposition")})
+        self._maybe_mdt_consult(summary, encounter_id=encounter_id, step=step)
         return summary
 
     def _apply_handoff_requested_summary(self, patient: Any, *, step: int, encounter_id: str, memory_id: str, payload: dict[str, Any]) -> CurrentEncounterSummary:

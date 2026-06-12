@@ -194,3 +194,208 @@ They differ by `ui_mode` and backend `EDSIM_MODE`:
 4. Shared simulation data path
 - Both modes read/write the same simulation storage tree under:
   `/home/jiawei2022/BME1325/week9/environment/frontend_server/storage/curr_sim/`
+
+---
+
+## 10) FullView Integration Status
+
+`week9` is now partially integrated with the unified FullView frontend in:
+
+```txt
+/home/jiawei2022/BME1325/BME_1325_Full_Vis/full_view
+```
+
+Current integration goal is:
+
+- keep EDMAS clinical/user-mode and auto-mode logic unchanged as much as possible;
+- translate EDMAS disposition or transfer decisions into standard FullView hospital movement requests;
+- let FullView remain the execution side for cross-room / cross-department move validation, event-log, snapshot update, bed occupancy, and animation playback.
+
+The current adapter path is:
+
+```txt
+EDMAS decision
+  -> app_core/integration/fullview_adapter.py
+  -> FullView POST /api/hospital/patients/ensure
+  -> FullView POST /api/hospital/events/move
+  -> FullView event-log / snapshot / animationPlan
+```
+
+Related EDMAS files:
+
+- `app_core/integration/fullview_adapter.py`
+- `app_core/integration/fullview_client.py`
+- `app_core/integration/fullview_mapping.py`
+- `app_core/integration/disposition_rules.py`
+- `app_core/app/api_v1.py`
+- `reverie/backend_server/auto_memory_hooks.py`
+- `reverie/backend_server/persona/persona_types/patient.py`
+
+Related FullView file:
+
+- `/home/jiawei2022/BME1325/BME_1325_Full_Vis/full_view/dev-server.py`
+
+---
+
+## 11) Current Inter-Room / Inter-Department Transfer Rules
+
+At the current stage, the integration only covers high-level simulated transfer rules.
+This is not a real clinical transfer engine.
+
+Supported outward movement types:
+
+1. `ED -> ICU`
+- FullView event: `TRANSFER_ED_TO_ICU`
+- Triggered when EDMAS user-mode doctor disposition or auto-mode admit rule determines ICU-level destination.
+
+2. `ED -> Ward`
+- FullView event: `TRANSFER_ED_TO_WARD`
+- Triggered when EDMAS disposition result is stable for admission but does not require ICU.
+
+3. `ED -> Diagnostic`
+- FullView event: `ED_TO_DIAGNOSTIC_MOVE`
+- Triggered by doctor ordered test / auto-mode testing transition.
+
+4. `ED -> Discharge`
+- FullView event: `ED_PATIENT_EXIT_HOSPITAL`
+- Triggered when EDMAS concludes low-risk discharge.
+
+High-level routing logic currently uses:
+
+- EDMAS triage acuity (`A/B/C/D`)
+- CTAS-compatible level
+- simplified MEWS-like risk scoring
+- simplified danger stratification from vitals such as `SpO2`, `SBP`, `resp_rate`, `heart_rate`
+
+Current default routing summary:
+
+- `acuity A/B`, CTAS 1, or severe danger-tier -> ICU
+- `acuity C`, CTAS 2/3, or moderate danger-tier -> Ward
+- explicit test / exam need -> Diagnostic
+- lower-risk completion -> Discharge
+
+Important limitation:
+
+- EDMAS internal movement and FullView movement are not yet a single source of truth.
+- FullView move success does not yet fully back-propagate to all EDMAS internal states.
+- Auto mode still does not simulate a true internal ICU/Ward floor transition inside EDMAS itself.
+
+---
+
+## 12) Current Test Results
+
+### Automated checks completed
+
+Static compile check passed for:
+
+- `BME_1325_Full_Vis/full_view/dev-server.py`
+- `week9/app_core/integration/*.py`
+- `week9/app_core/app/api_v1.py`
+- `week9/reverie/backend_server/auto_memory_hooks.py`
+- `week9/reverie/backend_server/persona/persona_types/patient.py`
+
+Focused backend tests passed:
+
+```bash
+cd /home/jiawei2022/BME1325/week9
+pytest -q --noconftest \
+  tests/backend/test_fullview_adapter.py \
+  tests/backend/test_fullview_ensure_api.py
+```
+
+Result:
+
+```txt
+6 passed
+```
+
+### End-to-end integration checks completed
+
+The following FullView-side movement chains were successfully verified:
+
+1. `ED -> ICU`
+- event accepted: `TRANSFER_ED_TO_ICU`
+- verified patient moved into ICU bed room
+
+2. `ED -> Ward`
+- event accepted: `TRANSFER_ED_TO_WARD`
+- verified patient moved into ward bed room
+
+3. `ED -> Diagnostic`
+- event accepted: `ED_TO_DIAGNOSTIC_MOVE`
+- verified patient moved into diagnostic room
+
+4. `ED -> Discharge`
+- event accepted: `ED_PATIENT_EXIT_HOSPITAL`
+- verified patient moved to `exit` pseudo-target and marked discharged
+
+### Concrete verified examples
+
+Example ICU case from EDMAS user mode:
+
+- HIS patient id: `P-5d9fc8fc`
+- FullView event: `TRANSFER_ED_TO_ICU`
+- FullView eventSeq: `95`
+- Final FullView location: `icu_beds_a`
+- Final FullView status: `ADMITTED`
+
+Example Ward case:
+
+- FullView eventSeq: `100`
+- Event: `TRANSFER_ED_TO_WARD`
+
+Example Diagnostic case:
+
+- FullView eventSeq: `101`
+- Event: `ED_TO_DIAGNOSTIC_MOVE`
+
+Example Discharge case:
+
+- FullView eventSeq: `102`
+- Event: `ED_PATIENT_EXIT_HOSPITAL`
+
+Example rejected case:
+
+- FullView eventSeq: `103`
+- Event: `TRANSFER_ED_TO_WARD`
+- Rejection reason: `PATIENT_ROOM_MISMATCH`
+
+This rejection check is important because it confirms FullView is still enforcing movement legality and not blindly accepting adapter requests.
+
+---
+
+## 13) Next Optimization Targets
+
+The current adapter proves the request chain is working, but it is still a v1 integration layer.
+Next-stage priorities are:
+
+1. Unify state truth
+- reduce divergence between EDMAS internal workflow phase and FullView room/state snapshot;
+- define which side is canonical for patient location, transfer status, and disposition state.
+
+2. Expand event coverage
+- support more detailed ED internal room transitions;
+- support diagnostic return, observation, boarding, and richer consult-room states.
+
+3. Improve stable identity mapping
+- ensure one stable patient id and one stable encounter id are used consistently across:
+  - EDMAS user mode
+  - EDMAS auto mode
+  - HIS storage
+  - FullView
+
+4. Improve reverse synchronization
+- after FullView accepts or rejects a move, expose a clearer callback/result path into EDMAS UI and runtime state.
+
+5. Strengthen test coverage
+- add regression tests for:
+  - ICU full / ward full
+  - diagnostic blocked
+  - repeated ensure/upsert requests
+  - repeated move requests
+  - user-mode and auto-mode consistency
+
+6. Clarify clinical simulation policy
+- keep the system at high-level simulation fidelity;
+- avoid drifting into real-world diagnostic/clinical decision claims;
+- document simplified CTAS/MEWS/disposition assumptions explicitly.

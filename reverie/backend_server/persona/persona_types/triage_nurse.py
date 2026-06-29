@@ -10,6 +10,8 @@ import utils
 sys.path.append('../../')
 from persona.persona import *
 from persona.memory_structures.scratch_types.triage_nurse_scratch import *
+from bedside_queue_guards import guarded_bedside_reinsert
+from ed_priority import queue_patient_priority_key, patient_ctas_level
 
 class Triage_Nurse(Persona):
     priority_factor = 0
@@ -47,19 +49,34 @@ class Triage_Nurse(Persona):
                 patient_name = self.scratch.chatting_patient
                 patient = personas.get(patient_name)
                 if patient:
-                    ctas = patient.scratch.CTAS if patient.scratch.CTAS is not None else 3
-                    bisect.insort_right(
-                        maze.patients_waiting_for_doctor,
-                        [ctas * self.priority_factor, patient_name]
+                    data_collection.setdefault("Patients_Attended", []).append(
+                        {
+                            "step": int(getattr(self, "runtime_step", 0) or 0),
+                            "time": curr_time.strftime("%B %d, %Y, %H:%M:%S") if curr_time else None,
+                            "patient": patient_name,
+                        }
                     )
+                    if hasattr(patient, "stamp_triage_completed"):
+                        patient.stamp_triage_completed(int(getattr(patient, "runtime_step", 0) or 0))
+                    ctas = patient.scratch.CTAS if patient.scratch.CTAS is not None else 3
 
-                    # Add patient to priority list for bedside nurse assisstance
-                    if ctas != 1:
-                        bisect.insort_right(
-                            maze.injuries_zones["bedside_nurse_waiting"],
-                            [ctas * self.priority_factor, patient_name]
+                    # Critical patients (CTAS 1/2) bypass the normal bedside
+                    # queue so burst-mode triage completions are not trapped
+                    # behind lower-acuity transfers.
+                    if ctas > 2:
+                        inserted, reason = guarded_bedside_reinsert(
+                            queue=maze.injuries_zones["bedside_nurse_waiting"],
+                            patient=patient,
+                            priority=ctas * self.priority_factor,
+                            data_collection=None,
+                            increment_reinsert_count=False,
                         )
-                    # If they have been assigned a CTAS page a nurse to treat patient as quickly as possible.
+                        if inserted:
+                            print(f"(TriageNurse) queued {patient_name} in bedside_nurse_waiting")
+                        elif reason == "reinsert_count_exceeded_warning":
+                            print(f"(TriageNurse) warning - {patient_name} bedside reinsert_count exceeded 3; suppressing repeat reinsert")
+                    # Critical patients go to the pager queue for immediate
+                    # bedside pickup.
                     else:
                         bisect.insort_right(
                             maze.injuries_zones["pager"],
@@ -69,10 +86,26 @@ class Triage_Nurse(Persona):
 
             # Move patient into triage room when there is room to fit them
             if(maze.triage_queue != [] and maze.triage_patients < maze.triage_capacity):
-                # Pop from the triage queue to grab Patient that been waiting the longest
+                maze.triage_queue.sort(key=lambda patient_name: queue_patient_priority_key(patient_name, personas))
+                # Pop according to unified ED CTAS priority discipline
                 persona_name = maze.triage_queue.pop(0)
                 patient = personas.get(persona_name)
                 if patient:
+                    data_collection.setdefault("Selection_Events", []).append(
+                        {
+                            "step": int(getattr(self, "runtime_step", 0) or 0),
+                            "selector_role": "TriageNurse",
+                            "selector": self.name,
+                            "queue": "triage_queue",
+                            "selected_patient": persona_name,
+                            "selected_patient_ctas": patient_ctas_level(patient),
+                            "candidate_ctas_order": [
+                                patient_ctas_level(personas[name])
+                                for name in maze.triage_queue[:5]
+                                if name in personas
+                            ],
+                        }
+                    )
                     patient.to_triage(self)
                     maze.triage_patients += 1
                 self.scratch.next_step = f"<persona> {persona_name}"
@@ -104,3 +137,6 @@ class Triage_Nurse(Persona):
 
         # return random.choice(list(maze.address_tiles["<spawn_loc>triage room"]))
     #ed map:emergency department:triage room:chair
+
+    def data_collection_dict(self):
+        return {"Patients_Attended": []}

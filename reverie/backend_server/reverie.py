@@ -47,8 +47,10 @@ from wait_time_utils import (
     _sample_wait_minutes,
     _assign_wait_targets,
 )
+from bedside_nurse_ordering import is_bedside_nurse_name, rotate_bedside_nurse_order
+from bed_zone_capacity_overrides import apply_bed_zone_capacity_overrides
 from week7_logic import effective_arrival_rate
-from bedside_queue_guards import guarded_bedside_reinsert
+from bedside_queue_guards import cleanup_bedside_nurse_waiting_queue, guarded_bedside_reinsert
 from failure_metrics import collect_failure_metrics
 from runtime_evidence import accumulate_queue_exposure, ensure_queue_exposure
 
@@ -595,6 +597,20 @@ class ReverieServer:
     self.arrival_profile_mode = str(reverie_meta.get("arrival_profile_mode", "normal")).strip().lower()
     if self.arrival_profile_mode not in {"normal", "surge", "burst"}:
       self.arrival_profile_mode = "normal"
+    self.benchmark_run_id = str(reverie_meta.get("benchmark_run_id", "") or "").strip() or None
+    self.benchmark_basis = str(reverie_meta.get("benchmark_basis", "") or "").strip() or None
+    self.standard_equivalent_patients_per_day = reverie_meta.get("standard_equivalent_patients_per_day")
+    self.actual_simulated_arrivals = reverie_meta.get("actual_simulated_arrivals")
+    self.simulation_scale_factor = reverie_meta.get("simulation_scale_factor")
+    self.resource_scaling_policy = reverie_meta.get("resource_scaling_policy")
+    self.burst_window_min = reverie_meta.get("burst_window_min")
+    self.scheduled_arrival_enabled = bool(reverie_meta.get("scheduled_arrival_enabled", False))
+    self.scheduled_arrival_count = int(reverie_meta.get("scheduled_arrival_count", 0) or 0)
+    self.pending_scheduled_arrivals = []
+    self.completed_scheduled_arrivals = []
+    self.arrival_schedule_window_steps = None
+    self.equivalent_arrival_rate_per_hour = reverie_meta.get("equivalent_arrival_rate_per_hour")
+    self.ctas_mix = reverie_meta.get("ctas_mix") if isinstance(reverie_meta.get("ctas_mix"), dict) else None
     self.hospital_profile_name = str(reverie_meta.get("hospital_profile_name", "") or "").strip() or None
     downstream_profile = resolve_downstream_profile(self.hospital_profile_name)
     self.lab_capacity = max(1, int(reverie_meta.get("lab_capacity", 2) or 2))
@@ -609,10 +625,21 @@ class ReverieServer:
       ) or 240
     )
     self.status_interval_steps = max(1, int(reverie_meta.get("status_interval_steps", self._STATUS_INTERVAL) or self._STATUS_INTERVAL))
+    self.bedside_nurse_order_rotation_enabled = str(os.environ.get("EDSIM_ROTATE_BEDSIDE_NURSE_ORDER", "0")) == "1"
+    self.bedside_nurse_order_rotation_offset = 0
+    self.bedside_nurse_order_first = None
     self.maze.lab_capacity = self.lab_capacity
     self.maze.imaging_capacity = self.imaging_capacity
     self.maze.injuries_zones["diagnostic room"]["capacity"] = self.imaging_capacity
     self.diagnostic_room_capacity = self.imaging_capacity
+    self.bed_zone_capacity_override_report = apply_bed_zone_capacity_overrides(
+      self.maze,
+      {
+        "major_zone_bed_multiplier": reverie_meta.get("major_zone_bed_multiplier"),
+        "minor_zone_capacity_multiplier": reverie_meta.get("minor_zone_capacity_multiplier"),
+        "observation_bed_multiplier": reverie_meta.get("observation_bed_multiplier"),
+      },
+    )
 
     # <step> denotes the number of steps that our game has taken. A step here
     # literally translates to the number of moves our personas made in terms
@@ -638,6 +665,20 @@ class ReverieServer:
       step=self.step,
       extra={
         "arrival_profile_mode": self.arrival_profile_mode,
+        "benchmark_run_id": self.benchmark_run_id,
+        "benchmark_basis": self.benchmark_basis,
+        "standard_equivalent_patients_per_day": self.standard_equivalent_patients_per_day,
+        "actual_simulated_arrivals": self.actual_simulated_arrivals,
+        "simulation_scale_factor": self.simulation_scale_factor,
+        "resource_scaling_policy": self.resource_scaling_policy,
+        "burst_window_min": self.burst_window_min,
+        "scheduled_arrival_enabled": self.scheduled_arrival_enabled,
+        "scheduled_arrival_count": self.scheduled_arrival_count,
+        "scheduled_arrival_window_steps": self.arrival_schedule_window_steps,
+        "scheduled_arrival_remaining_count": len(self.pending_scheduled_arrivals),
+        "scheduled_arrival_completed_count": len(self.completed_scheduled_arrivals),
+        "equivalent_arrival_rate_per_hour": self.equivalent_arrival_rate_per_hour,
+        "ctas_mix": self.ctas_mix,
         "patient_rate_modifier": self.patient_rate,
         "lab_capacity": self.lab_capacity,
         "lab_turnaround_minutes": self.lab_turnaround_minutes,
@@ -709,6 +750,11 @@ class ReverieServer:
     downstream_overrides = {
       "icu_capacity": reverie_meta.get("icu_capacity", downstream_profile.get("icu_capacity", 0)),
       "ward_capacity": reverie_meta.get("ward_capacity", downstream_profile.get("ward_capacity", 0)),
+      "icu_acceptance_probability": reverie_meta.get(
+        "icu_acceptance_probability",
+        downstream_profile.get("icu_acceptance_probability", 1.0),
+      ),
+      "random_seed": reverie_meta.get("seed", self.seed),
       "transfer_turnaround_minutes": reverie_meta.get(
         "transfer_turnaround_minutes",
         downstream_profile.get("transfer_turnaround_minutes", 30),
@@ -747,6 +793,13 @@ class ReverieServer:
 
     Doctor.priority_factor = reverie_meta["priority_factor"]
     Doctor.max_patients = reverie_meta.get("max_patients_assigned_doctor", 5)
+    self.requested_doctor_count_delta = reverie_meta.get("doctor_count_delta")
+    self.requested_doctor_count_override = reverie_meta.get("doctor_count_override")
+    self.requested_doctor_dispatch_policy = reverie_meta.get("requested_doctor_dispatch_policy", reverie_meta.get("doctor_dispatch_policy"))
+    self.doctor_dispatch_policy = str(reverie_meta.get("doctor_dispatch_policy", "legacy") or "legacy").strip().lower()
+    if self.doctor_dispatch_policy not in {"legacy", "fifo", "ctas_priority", "oldest_wait_first"}:
+      self.doctor_dispatch_policy = "legacy"
+    Doctor.dispatch_policy = self.doctor_dispatch_policy
     # Load supporting data before personas are instantiated
     self.symptoms = read_csv_to_dict('data/diagnosis.csv')
     self.ed_visits = read_csv_to_dict('data/ed_visits_per_hour.csv')
@@ -774,6 +827,7 @@ class ReverieServer:
     # self.persona_convo = dict()
     
     self.doctor_starting_amount = reverie_meta["doctor_starting_amount"]
+    self.effective_doctor_count = self.doctor_starting_amount
     self.triage_starting_amount = reverie_meta["triage_starting_amount"]
     self.bedside_starting_amount = reverie_meta["bedside_starting_amount"]
 
@@ -1086,11 +1140,19 @@ class ReverieServer:
         queued_names.add(persona.name)
         print(f"(reverie): Rescued orphaned patient {persona.name} (state={persona.scratch.state}, CTAS {persona.scratch.CTAS}) into patients_waiting_for_doctor")
 
-      # Nurse queue: only for WAITING_FOR_NURSE patients not already claimed
+      # Nurse queue: only for WAITING_FOR_NURSE patients not already claimed.
+      # Critical patients (CTAS 1/2) stay in the pager path so orphan rescue
+      # does not demote them back into the general bedside queue.
       if persona.scratch.state == "WAITING_FOR_NURSE":
         if persona.name in nurse_occupied_patients:
           continue
         ctas = persona.scratch.CTAS if persona.scratch.CTAS else 3
+        if ctas <= 2:
+          entry = [ctas * Patient.priority_factor, persona.name]
+          if entry not in self.maze.injuries_zones.get("pager", []):
+            bisect.insort_right(self.maze.injuries_zones["pager"], entry)
+            print(f"(reverie): Queued {persona.name} into pager after triage timeout rescue")
+          continue
         inserted, reason = guarded_bedside_reinsert(
           queue=self.maze.injuries_zones["bedside_nurse_waiting"],
           patient=persona,
@@ -1098,9 +1160,19 @@ class ReverieServer:
           data_collection=self.data_collection,
         )
         if inserted:
-          print(f"(reverie): Re-inserted {persona.name} into bedside_nurse_waiting")
+          print(f"(reverie): Queued {persona.name} into bedside_nurse_waiting after triage timeout")
         elif reason == "reinsert_count_exceeded_warning":
           print(f"(reverie): Warning - {persona.name} bedside reinsert_count exceeded 3; suppressing repeat reinsert")
+
+  def _cleanup_bedside_nurse_waiting_queue(self):
+    removed = cleanup_bedside_nurse_waiting_queue(
+      queue=self.maze.injuries_zones.get("bedside_nurse_waiting", []),
+      personas=self.personas,
+    )
+    total_removed = sum(int(value) for value in removed.values())
+    if total_removed:
+      print(f"(reverie): Cleaned {total_removed} stale bedside_nurse_waiting entrie(s): {removed}")
+    return removed
 
   def _age_global_doctor_queue(self):
     """
@@ -1315,6 +1387,43 @@ class ReverieServer:
 
       print(f"(reverie): Preloaded patient {persona.name} departing (scheduled departure reached)")
 
+  def _select_symptom_index_for_ctas_mix(self):
+    """Pick a symptom index, honoring benchmark CTAS mix when configured."""
+    symptoms = self.symptoms["Symptoms"]
+    default_probs = self.symptoms["normalized_fraction"]
+    if not isinstance(getattr(self, "ctas_mix", None), dict) or not self.ctas_mix:
+      symptom = str(numpy.random.choice(symptoms, p=default_probs))
+      return self.symptoms["Symptoms"].index(symptom)
+
+    buckets = {}
+    for idx, raw_ctas in enumerate(self.symptoms["CTAS"]):
+      try:
+        ctas_key = f"L{int(raw_ctas)}"
+      except (TypeError, ValueError):
+        continue
+      buckets.setdefault(ctas_key, []).append(idx)
+
+    weighted_levels = []
+    weights = []
+    for level in ("L1", "L2", "L3", "L4", "L5"):
+      if level not in buckets:
+        continue
+      try:
+        weight = float(self.ctas_mix.get(level, 0) or 0)
+      except (TypeError, ValueError):
+        weight = 0
+      if weight > 0:
+        weighted_levels.append(level)
+        weights.append(weight)
+
+    if not weighted_levels or sum(weights) <= 0:
+      symptom = str(numpy.random.choice(symptoms, p=default_probs))
+      return self.symptoms["Symptoms"].index(symptom)
+
+    probs = [w / sum(weights) for w in weights]
+    selected_level = str(numpy.random.choice(weighted_levels, p=probs))
+    return int(random.choice(buckets[selected_level]))
+
   # ------------------------------------------------------------------
   # Triage timeout safety net
   # ------------------------------------------------------------------
@@ -1345,6 +1454,9 @@ class ReverieServer:
             f"({triage_minutes:.1f} min in TRIAGE) — force-completing")
 
       # 1. Transition: TRIAGE → WAITING_FOR_NURSE
+      runtime_step = int(getattr(persona, "runtime_step", 0) or 0)
+      if hasattr(persona, "stamp_triage_completed"):
+        persona.stamp_triage_completed(runtime_step)
       persona.scratch.state = "WAITING_FOR_NURSE"
       persona.scratch.next_room = persona.scratch.injuries_zone
       persona.scratch.next_step = (
@@ -1356,28 +1468,28 @@ class ReverieServer:
       if self.maze.triage_patients > 0:
         self.maze.triage_patients -= 1
 
-      # 3. Add to bedside nurse queue (pager if CTAS 1)
+      # 3. Add to bedside nurse queue (pager if CTAS 1/2)
       ctas = persona.scratch.CTAS if persona.scratch.CTAS is not None else 3
       prio = ctas * Patient.priority_factor
-      if ctas != 1:
-        bisect.insort_right(
-            self.maze.injuries_zones["bedside_nurse_waiting"],
-            [prio, persona.name],
+      if ctas > 2:
+        inserted, reason = guarded_bedside_reinsert(
+            queue=self.maze.injuries_zones["bedside_nurse_waiting"],
+            patient=persona,
+            priority=prio,
+            data_collection=self.data_collection,
+            increment_reinsert_count=False,
         )
+        if inserted:
+          print(f"(reverie): Re-inserted {persona.name} into bedside_nurse_waiting")
+        elif reason == "reinsert_count_exceeded_warning":
+          print(f"(reverie): Warning - {persona.name} bedside reinsert_count exceeded 3; suppressing repeat reinsert")
       else:
         bisect.insort_right(
             self.maze.injuries_zones["pager"],
             [prio, persona.name],
         )
 
-      # 4. Add to doctor waiting queue
-      if not any(e[1] == persona.name for e in self.maze.patients_waiting_for_doctor):
-        bisect.insort_right(
-            self.maze.patients_waiting_for_doctor,
-            [prio, persona.name],
-        )
-
-      # 5. Clear stale chatting state on any triage nurse referencing
+      # 4. Clear stale chatting state on any triage nurse referencing
       #    this patient
       for other in self.personas.values():
         if getattr(other, "role", None) == "TriageNurse":
@@ -1397,6 +1509,15 @@ class ReverieServer:
     lab_waiting = 0
     imaging_waiting = 0
     boarding_patient_count = 0
+    zone_payload = {}
+    for zone_name in ["trauma room", "major injuries zone", "minor injuries zone", "diagnostic room"]:
+      info = self.maze.injuries_zones.get(zone_name, {})
+      if not isinstance(info, dict):
+        continue
+      zone_payload[zone_name] = {
+        "occupied": int(len(info.get("current_patients", []))),
+        "capacity": int(info.get("capacity", 0) or 0),
+      }
     for p in self.personas.values():
       if getattr(p, "role", None) != "Patient":
         continue
@@ -1416,6 +1537,14 @@ class ReverieServer:
       "lab_queue_len": int(lab_waiting),
       "imaging_queue_len": int(imaging_waiting),
       "boarding_patient_count": int(boarding_patient_count),
+      "trauma_room_occupied": zone_payload.get("trauma room", {}).get("occupied", 0),
+      "trauma_room_capacity": zone_payload.get("trauma room", {}).get("capacity", 0),
+      "major_zone_occupied": zone_payload.get("major injuries zone", {}).get("occupied", 0),
+      "major_zone_capacity": zone_payload.get("major injuries zone", {}).get("capacity", 0),
+      "minor_zone_occupied": zone_payload.get("minor injuries zone", {}).get("occupied", 0),
+      "minor_zone_capacity": zone_payload.get("minor injuries zone", {}).get("capacity", 0),
+      "diagnostic_room_occupied": zone_payload.get("diagnostic room", {}).get("occupied", 0),
+      "diagnostic_room_capacity": zone_payload.get("diagnostic room", {}).get("capacity", 0),
     }
 
   def _write_queue_trace(self, sim_folder):
@@ -1426,6 +1555,7 @@ class ReverieServer:
     return snapshot
 
   def _update_patient_queue_exposure(self):
+    self._cleanup_bedside_nurse_waiting_queue()
     snapshot = self._queue_snapshot_payload()
     doctor_queue = list(self.maze.patients_waiting_for_doctor)
     bedside_queue = list(self.maze.injuries_zones.get("bedside_nurse_waiting", []))
@@ -1672,6 +1802,17 @@ class ReverieServer:
       },
       "resources": {
         "arrival_profile_mode": self.arrival_profile_mode,
+        "benchmark_run_id": self.benchmark_run_id,
+        "benchmark_basis": self.benchmark_basis,
+        "standard_equivalent_patients_per_day": self.standard_equivalent_patients_per_day,
+        "actual_simulated_arrivals": self.actual_simulated_arrivals,
+        "simulation_scale_factor": self.simulation_scale_factor,
+        "resource_scaling_policy": self.resource_scaling_policy,
+        "burst_window_min": self.burst_window_min,
+        "scheduled_arrival_enabled": self.scheduled_arrival_enabled,
+        "scheduled_arrival_count": self.scheduled_arrival_count,
+        "equivalent_arrival_rate_per_hour": self.equivalent_arrival_rate_per_hour,
+        "ctas_mix": self.ctas_mix,
         "time_scale_minutes_per_step": self.time_scale_minutes_per_step,
         "lab_in_progress": lab_in_progress,
         "lab_capacity": self.lab_capacity,
@@ -1688,8 +1829,19 @@ class ReverieServer:
         "downstream_transfer_request_count": downstream_summary["transfer_request_count"],
         "downstream_accepted_transfer_count": downstream_summary["accepted_transfer_count"],
         "downstream_pending_transfer_count": downstream_summary["pending_transfer_count"],
+        "downstream_icu_acceptance_probability": downstream_summary.get("icu_acceptance_probability"),
+        "downstream_icu_probability_gate_pending_count": downstream_summary.get("icu_probability_gate_pending_count"),
         "downstream_boarding_patient_count": downstream_summary["boarding_patient_count"],
         "downstream_boarding_timeout_events": downstream_summary["boarding_timeout_events"],
+        "bedside_nurse_order_rotation_enabled": self.bedside_nurse_order_rotation_enabled,
+        "bedside_nurse_order_rotation_offset": self.bedside_nurse_order_rotation_offset,
+        "bedside_nurse_order_first": self.bedside_nurse_order_first,
+        "bed_zone_capacity_overrides": self.bed_zone_capacity_override_report,
+        "requested_doctor_count_delta": self.requested_doctor_count_delta,
+        "requested_doctor_count_override": self.requested_doctor_count_override,
+        "requested_doctor_dispatch_policy": self.requested_doctor_dispatch_policy,
+        "effective_doctor_count": self.effective_doctor_count,
+        "doctor_dispatch_policy": self.doctor_dispatch_policy,
       },
       "downstream": downstream_summary,
       "nurse_status": nurse_status,
@@ -1697,6 +1849,7 @@ class ReverieServer:
       "doctors_total": len(doctor_assigned),
       "doctors_accepting": doctors_free,
       "doctor_max_patients": Doctor.max_patients,
+      "doctor_dispatch_policy": self.doctor_dispatch_policy,
     }
     failure_metrics = collect_failure_metrics(
       personas=self.personas,
@@ -1906,8 +2059,27 @@ class ReverieServer:
     reverie_meta["patient_post_discharge_linger_minutes"] = self.patient_post_discharge_linger_minutes
     reverie_meta["patient_rate_modifier"] = self.patient_rate
     reverie_meta["arrival_profile_mode"] = self.arrival_profile_mode
+    reverie_meta["benchmark_run_id"] = self.benchmark_run_id
+    reverie_meta["benchmark_basis"] = self.benchmark_basis
+    reverie_meta["standard_equivalent_patients_per_day"] = self.standard_equivalent_patients_per_day
+    reverie_meta["actual_simulated_arrivals"] = self.actual_simulated_arrivals
+    reverie_meta["simulation_scale_factor"] = self.simulation_scale_factor
+    reverie_meta["resource_scaling_policy"] = self.resource_scaling_policy
+    reverie_meta["burst_window_min"] = self.burst_window_min
+    reverie_meta["scheduled_arrival_enabled"] = self.scheduled_arrival_enabled
+    reverie_meta["scheduled_arrival_count"] = self.scheduled_arrival_count
+    reverie_meta["scheduled_arrival_window_steps"] = self.arrival_schedule_window_steps
+    reverie_meta["scheduled_arrival_remaining_count"] = len(self.pending_scheduled_arrivals)
+    reverie_meta["scheduled_arrival_completed_count"] = len(self.completed_scheduled_arrivals)
+    reverie_meta["equivalent_arrival_rate_per_hour"] = self.equivalent_arrival_rate_per_hour
+    reverie_meta["ctas_mix"] = self.ctas_mix
     reverie_meta["add_patient_threshold"] = self.add_patient_threshold
     reverie_meta["doctor_starting_amount"] = self.doctor_starting_amount
+    reverie_meta["doctor_count_delta"] = self.requested_doctor_count_delta
+    reverie_meta["doctor_count_override"] = self.requested_doctor_count_override
+    reverie_meta["effective_doctor_count"] = self.effective_doctor_count
+    reverie_meta["requested_doctor_dispatch_policy"] = self.requested_doctor_dispatch_policy
+    reverie_meta["doctor_dispatch_policy"] = self.doctor_dispatch_policy
     reverie_meta["triage_starting_amount"] = self.triage_starting_amount
     reverie_meta["bedside_starting_amount"] = self.bedside_starting_amount
     reverie_meta["fill_injuries"] = self.fill_injuries
@@ -1916,6 +2088,7 @@ class ReverieServer:
     reverie_meta["global_queue_aging_interval_minutes"] = self._global_queue_aging_interval
     reverie_meta["preload_departure_window_hours"] = self._preload_departure_window_hours
     reverie_meta["diagnostic_room_capacity"] = self.diagnostic_room_capacity
+    reverie_meta["bed_zone_capacity_overrides"] = self.bed_zone_capacity_override_report
     reverie_meta["lab_capacity"] = self.lab_capacity
     reverie_meta["lab_turnaround_minutes"] = self.lab_turnaround_minutes
     reverie_meta["imaging_capacity"] = self.imaging_capacity
@@ -1931,6 +2104,7 @@ class ReverieServer:
     if self.transfer_broker is not None:
       reverie_meta["icu_capacity"] = self.transfer_broker.icu_unit.capacity
       reverie_meta["ward_capacity"] = self.transfer_broker.ward_unit.capacity
+      reverie_meta["icu_acceptance_probability"] = self.transfer_broker.icu_acceptance_probability
       reverie_meta["transfer_turnaround_minutes"] = self.transfer_broker.transfer_turnaround_minutes
 
     # Save name and role into meta file
@@ -2398,8 +2572,8 @@ class ReverieServer:
     self.preload_waiting_room_patients = 0
 
     for i in range(int(count)):
-      symptoms = str(numpy.random.choice(self.symptoms["Symptoms"], p=self.symptoms["normalized_fraction"]))
-      symptoms_index = self.symptoms["Symptoms"].index(symptoms)
+      symptoms_index = self._select_symptom_index_for_ctas_mix()
+      symptoms = str(self.symptoms["Symptoms"][symptoms_index])
       innates = ["Impatient, Friendly", "Unstable, Friendly"]
       choosen_innate = random.choice(innates)
 
@@ -2426,6 +2600,120 @@ class ReverieServer:
         )
 
     print(f"(reverie): Preloaded {count} real patients into the waiting room")
+
+  def _scheduled_arrival_window_steps(self, total_steps: int) -> int:
+    total_steps = max(1, int(total_steps))
+    if self.arrival_profile_mode == "burst":
+      try:
+        burst_window = int(float(self.burst_window_min or 0))
+      except (TypeError, ValueError):
+        burst_window = 0
+      if burst_window > 0:
+        window_steps = int(math.ceil(burst_window / float(self.time_scale_minutes_per_step or 1)))
+        return max(1, min(total_steps, window_steps))
+    return total_steps
+
+  def _build_scheduled_arrival_plan(self, total_steps: int):
+    count = int(self.scheduled_arrival_count or 0)
+    if not self.scheduled_arrival_enabled or count <= 0:
+      self.pending_scheduled_arrivals = []
+      self.completed_scheduled_arrivals = []
+      self.arrival_schedule_window_steps = None
+      return
+
+    window_steps = self._scheduled_arrival_window_steps(total_steps)
+    self.arrival_schedule_window_steps = window_steps
+    if count == 1:
+      arrival_steps = [0]
+    else:
+      arrival_steps = [
+        int(round(i * float(max(0, window_steps - 1)) / float(count - 1)))
+        for i in range(count)
+      ]
+    self.pending_scheduled_arrivals = [
+      {
+        "arrival_step": arrival_step,
+        "ordinal": index + 1,
+      }
+      for index, arrival_step in enumerate(arrival_steps)
+    ]
+    self.completed_scheduled_arrivals = []
+    self._runtime_log(
+      "scheduled arrival plan prepared",
+      step=self.step,
+      extra={
+        "scheduled_arrival_count": count,
+        "arrival_profile_mode": self.arrival_profile_mode,
+        "window_steps": window_steps,
+        "first_arrival_step": arrival_steps[0] if arrival_steps else None,
+        "last_arrival_step": arrival_steps[-1] if arrival_steps else None,
+      },
+    )
+
+  def _spawn_runtime_arrival(self, *, source: str, scheduled_event: dict | None = None):
+    symptoms_index = self._select_symptom_index_for_ctas_mix()
+    symptoms = str(self.symptoms["Symptoms"][symptoms_index])
+    innates = ["Impatient, Friendly", "Unstable, Friendly"]
+    choosen_innate = random.choice(innates)
+    new_patient, curr_tile = self.add_persona_to_sim(
+      "Patient",
+      f"Experiencing {symptoms} | Innate: {choosen_innate}",
+      persona_loc=random.choice(list(self.maze.address_tiles["<spawn_loc>exit"])),
+    )
+    new_patient.scratch.ICD = self.symptoms["ICD-10-CA"][symptoms_index]
+    new_patient.scratch.CTAS = int(self.symptoms["CTAS"][symptoms_index])
+    new_patient.scratch.injuries_zone = self.symptoms["Zone"][symptoms_index]
+    self.maze.triage_queue.append(new_patient.name)
+    self._runtime_log(
+      "patient arrival generated",
+      step=self.step,
+      extra={
+        "patient": new_patient.name,
+        "arrival_profile_mode": self.arrival_profile_mode,
+        "ctas": new_patient.scratch.CTAS,
+        "zone": new_patient.scratch.injuries_zone,
+        "source": source,
+        "scheduled_arrival_step": scheduled_event.get("arrival_step") if isinstance(scheduled_event, dict) else None,
+        "arrival_ordinal": scheduled_event.get("ordinal") if isinstance(scheduled_event, dict) else None,
+      },
+    )
+    if getattr(self, "auto_memory_hooks", None):
+      self.auto_memory_hooks.record_encounter_started(
+        new_patient,
+        step=self.step,
+        sim_time=self.curr_time,
+        source=source,
+      )
+    return new_patient, curr_tile
+
+  def _activate_scheduled_arrivals(self, movements: dict | None = None):
+    if not self.pending_scheduled_arrivals:
+      return []
+    activated = []
+    while self.pending_scheduled_arrivals and int(self.pending_scheduled_arrivals[0]["arrival_step"]) <= int(self.step):
+      scheduled_event = self.pending_scheduled_arrivals.pop(0)
+      new_patient, curr_tile = self._spawn_runtime_arrival(
+        source="scheduled_arrival",
+        scheduled_event=scheduled_event,
+      )
+      if isinstance(movements, dict):
+        movements.setdefault("persona", {})
+        movements["persona"][new_patient.name] = _build_movement_persona_payload(
+          persona=new_patient,
+          movement_tile=curr_tile,
+          movement_path=[[curr_tile[0], curr_tile[1]]],
+          pronunciatio="",
+          description="",
+          chat_payload=new_patient.scratch.chat,
+        )
+      scheduled_event = {
+        **scheduled_event,
+        "patient": new_patient.name,
+        "arrival_minute": new_patient.scratch.ed_arrival_minute,
+      }
+      self.completed_scheduled_arrivals.append(scheduled_event)
+      activated.append(scheduled_event)
+    return activated
 
   def start_server(self, int_counter):
     """
@@ -2491,6 +2779,7 @@ class ReverieServer:
 
     # Preload real patients into the waiting room (counted in data collection)
     self._preload_waiting_room()
+    self._build_scheduled_arrival_plan(int_counter)
 
     # # If the waiting room has stranded patients, make sure they get enqueued for triage
     # if not self.maze.triage_queue:
@@ -2671,8 +2960,26 @@ class ReverieServer:
             # This is where the core brains of the personas are invoked. 
             movements = {"persona": dict(), 
                          "meta": dict()}
+            self._activate_scheduled_arrivals(movements)
             self.maze.assigned_patient_ids_this_step = set()
-            for persona_name, persona in list(self.personas.items()): 
+            persona_items = list(self.personas.items())
+            persona_items = rotate_bedside_nurse_order(
+              persona_items,
+              step=self.step,
+              enabled=self.bedside_nurse_order_rotation_enabled,
+            )
+            bedside_nurse_order = [name for name, _persona in persona_items if is_bedside_nurse_name(name)]
+            if bedside_nurse_order:
+              self.bedside_nurse_order_first = bedside_nurse_order[0]
+              self.bedside_nurse_order_rotation_offset = (
+                self.step % len(bedside_nurse_order)
+                if self.bedside_nurse_order_rotation_enabled
+                else 0
+              )
+            else:
+              self.bedside_nurse_order_first = None
+              self.bedside_nurse_order_rotation_offset = 0
+            for persona_name, persona in persona_items: 
               # <next_tile> is a x,y coordinate. e.g., (58, 9)
               # <pronunciatio> is an emoji. e.g., "\ud83d\udca4"
               # <description> is a string description of the movement. e.g., 
@@ -2688,6 +2995,8 @@ class ReverieServer:
                 persona_bucket = persona.data_collection_dict()
                 role_bucket[persona_name] = persona_bucket
               persona.runtime_step = self.step
+              persona.runtime_data_collection_bucket = persona_bucket
+              persona.runtime_global_data_collection = self.data_collection
               pre_state = None
               pre_area = None
               if persona.role == "Patient":
@@ -2750,8 +3059,8 @@ class ReverieServer:
             # Add new Patient based on threshold when it's over or equal to one
             if(self.add_patient_threshold >= 1):
               # Select symptom based on probabilities 
-              symptoms = str(numpy.random.choice(self.symptoms["Symptoms"], p=self.symptoms["normalized_fraction"]))
-              symptoms_index = self.symptoms["Symptoms"].index(symptoms)
+              symptoms_index = self._select_symptom_index_for_ctas_mix()
+              symptoms = str(self.symptoms["Symptoms"][symptoms_index])
               innates = ["Impatient, Friendly", "Unstable, Friendly"]
               choosen_innate = random.choice(innates)
               new_patient, curr_tile = self.add_persona_to_sim("Patient",f"Experiencing {symptoms} | Innate: {choosen_innate}", 
@@ -2822,6 +3131,9 @@ class ReverieServer:
             # movements dictionary. 
             movements["meta"]["curr_time"] = (self.curr_time 
                                                .strftime("%B %d, %Y, %H:%M:%S"))
+            movements["meta"]["bedside_nurse_order_rotation_enabled"] = self.bedside_nurse_order_rotation_enabled
+            movements["meta"]["bedside_nurse_order_rotation_offset"] = self.bedside_nurse_order_rotation_offset
+            movements["meta"]["bedside_nurse_order_first"] = self.bedside_nurse_order_first
 
             # In headless mode, update personas_tile directly from movements
             # so the next iteration uses the new positions.

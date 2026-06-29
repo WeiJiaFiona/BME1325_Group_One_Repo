@@ -520,10 +520,23 @@ class Patient(Persona):
                 bed_target = self._target_bed(maze, self.scratch.injuries_zone)
                 ready_at = self.scratch.initial_assessment_ready_at
                 if (not ready_at or self.scratch.curr_time >= ready_at):
-                    if (bed_target
-                        and (not self.scratch.in_queue)
+                    current_arena = None
+                    try:
+                        current_arena = maze.tiles[curr_tile[1]][curr_tile[0]].get("arena")
+                    except Exception:
+                        current_arena = None
+                    on_exact_bed_tile = (
+                        bed_target
                         and bed_target[0] == curr_tile[0]
-                        and bed_target[1] == curr_tile[1]):
+                        and bed_target[1] == curr_tile[1]
+                    )
+                    same_zone_with_bed_assignment = bool(
+                        self.scratch.bed_assignment
+                        and current_arena
+                        and current_arena == self.scratch.injuries_zone
+                    )
+                    if ((not self.scratch.in_queue)
+                        and (on_exact_bed_tile or same_zone_with_bed_assignment)):
                         self.scratch.in_queue = True
                         if not any(entry[1] == self.name for entry in queue):
                             bisect.insort_right(queue,
@@ -1081,19 +1094,21 @@ class Patient(Persona):
         dict["care_completed_step"] = self.scratch.care_completed_step
         dict["care_completed_minute"] = self.scratch.care_completed_minute
         dict["disposition_status"] = self.scratch.disposition_status
-        dict["decision_to_admit_step"] = self.scratch.decision_to_admit_step
-        dict["decision_to_admit_minute"] = self.scratch.decision_to_admit_minute
-        dict["disposition_target"] = self.scratch.disposition_target
-        dict["transfer_request_id"] = self.scratch.transfer_request_id
-        dict["transfer_status"] = self.scratch.transfer_status
-        dict["boarding_started_step"] = self.scratch.boarding_started_step
-        dict["boarding_started_minute"] = self.scratch.boarding_started_minute
-        dict["ward_transfer_step"] = self.scratch.ward_transfer_step
-        dict["ward_transfer_minute"] = self.scratch.ward_transfer_minute
-        dict["icu_admit_step"] = self.scratch.icu_admit_step
-        dict["icu_admit_minute"] = self.scratch.icu_admit_minute
-        dict["boarding_timeout_step"] = self.scratch.boarding_timeout_step
-        dict["boarding_timeout_minute"] = self.scratch.boarding_timeout_minute
+        dict["assigned_doctor"] = getattr(self.scratch, "assigned_doctor", None)
+        dict["doctor_dispatch_policy_at_contact"] = getattr(self.scratch, "doctor_dispatch_policy_at_contact", None)
+        dict["decision_to_admit_step"] = getattr(self.scratch, "decision_to_admit_step", None)
+        dict["decision_to_admit_minute"] = getattr(self.scratch, "decision_to_admit_minute", None)
+        dict["disposition_target"] = getattr(self.scratch, "disposition_target", None)
+        dict["transfer_request_id"] = getattr(self.scratch, "transfer_request_id", None)
+        dict["transfer_status"] = getattr(self.scratch, "transfer_status", None)
+        dict["boarding_started_step"] = getattr(self.scratch, "boarding_started_step", None)
+        dict["boarding_started_minute"] = getattr(self.scratch, "boarding_started_minute", None)
+        dict["ward_transfer_step"] = getattr(self.scratch, "ward_transfer_step", None)
+        dict["ward_transfer_minute"] = getattr(self.scratch, "ward_transfer_minute", None)
+        dict["icu_admit_step"] = getattr(self.scratch, "icu_admit_step", None)
+        dict["icu_admit_minute"] = getattr(self.scratch, "icu_admit_minute", None)
+        dict["boarding_timeout_step"] = getattr(self.scratch, "boarding_timeout_step", None)
+        dict["boarding_timeout_minute"] = getattr(self.scratch, "boarding_timeout_minute", None)
         dict["queue_exposure"] = self.ensure_queue_exposure_payload()
         dict["bedside_reinsert_count"] = int(getattr(self.scratch, "bedside_reinsert_count", 0) or 0)
         dict["time_scale_minutes_per_step"] = self._minutes_per_step()
@@ -1134,10 +1149,10 @@ class Patient(Persona):
                 "boarding_end": (self.scratch.admission_boarding_end.strftime("%B %d, %Y, %H:%M:%S")
                                  if self.scratch.admission_boarding_end else None),
                 "boarding_duration_minutes": boarding_duration,
-                "decision_to_admit_minute": self.scratch.decision_to_admit_minute,
-                "disposition_target": self.scratch.disposition_target,
-                "transfer_request_id": self.scratch.transfer_request_id,
-                "transfer_status": self.scratch.transfer_status,
+                "decision_to_admit_minute": getattr(self.scratch, "decision_to_admit_minute", None),
+                "disposition_target": getattr(self.scratch, "disposition_target", None),
+                "transfer_request_id": getattr(self.scratch, "transfer_request_id", None),
+                "transfer_status": getattr(self.scratch, "transfer_status", None),
             })
         else:
             admission_entry.setdefault("occurred", False)
@@ -1149,7 +1164,7 @@ class Patient(Persona):
                 "timestamp": (self.scratch.boarding_timeout_at.strftime("%B %d, %Y, %H:%M:%S")
                               if self.scratch.boarding_timeout_at else None),
                 "threshold_minutes": float(self.boarding_timeout_minutes),
-                "minute": self.scratch.boarding_timeout_minute,
+                "minute": getattr(self.scratch, "boarding_timeout_minute", None),
             })
         else:
             timeout_entry.setdefault("occurred", False)

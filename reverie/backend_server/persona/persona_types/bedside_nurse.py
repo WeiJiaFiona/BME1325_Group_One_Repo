@@ -11,7 +11,7 @@ import utils
 sys.path.append('../../')
 from persona.persona import *
 from persona.memory_structures.scratch_types.bedside_nurse_scratch import *
-from bedside_queue_guards import select_bedside_patient_for_assignment
+from bedside_queue_guards import cleanup_bedside_nurse_waiting_queue, select_bedside_patient_for_assignment
 
 class Bedside_Nurse(Persona):
     testing_time = 0
@@ -147,7 +147,10 @@ class Bedside_Nurse(Persona):
         # CTAS 1 patients get placed in a separate pager queue
         if(maze.injuries_zones["pager"] != [] and not self.scratch.occupied):
             pager_patient_name = maze.injuries_zones["pager"][0][1]
+            assigned_this_step = getattr(maze, "assigned_patient_ids_this_step", set())
             if pager_patient_name not in personas:
+                maze.injuries_zones["pager"].pop(0)
+            elif pager_patient_name in assigned_this_step:
                 maze.injuries_zones["pager"].pop(0)
             else:
                 selected_patient = personas[pager_patient_name]
@@ -156,7 +159,7 @@ class Bedside_Nurse(Persona):
                 # CTAS 1 (pager) patients always get placed — they override
                 # bed capacity.  In a real ED a life-threatening patient is
                 # never turned away for lack of beds.
-                reserve_bed(selected_patient, target_zone)   # best-effort
+                reserved_bed = reserve_bed(selected_patient, target_zone)   # best-effort
                 maze.injuries_zones["pager"].pop(0)
 
                 # Reset all actions for both personas
@@ -167,6 +170,24 @@ class Bedside_Nurse(Persona):
                 self.scratch.chatting_with = None
 
                 data_collection["Patients_Attended"].append([selected_patient.name, curr_time.strftime("%B %d, %Y, %H:%M:%S")])
+                data_collection.setdefault("Assignment_Events", []).append({
+                    "step": int(getattr(self, "runtime_step", 0) or 0),
+                    "nurse": self.name,
+                    "patient": selected_patient.name,
+                    "queue": "pager",
+                })
+                data_collection.setdefault("Queue_Pop_Events", []).append({
+                    "step": int(getattr(self, "runtime_step", 0) or 0),
+                    "nurse": self.name,
+                    "patient": selected_patient.name,
+                    "queue": "pager",
+                    "assignment_path": "pager",
+                    "zone": selected_patient.scratch.next_room,
+                    "target_zone": target_zone,
+                    "injuries_zone": getattr(selected_patient.scratch, "injuries_zone", None),
+                    "reserved_bed": list(reserved_bed) if reserved_bed else None,
+                })
+                assigned_this_step.add(selected_patient.name)
 
                 zone = selected_patient.scratch.next_room
                 if(zone and zone in maze.injuries_zones and selected_patient.name not in maze.injuries_zones[zone]["current_patients"]):
@@ -209,6 +230,10 @@ class Bedside_Nurse(Persona):
         if (not self.scratch.chatting_with):
             # To Transport a Patient
             if(not self.scratch.occupied):
+                cleanup_bedside_nurse_waiting_queue(
+                    queue=maze.injuries_zones.get("bedside_nurse_waiting", []),
+                    personas=personas,
+                )
 
                 # So we can properly remove this entry from the queue
                 selected_patient = None
@@ -224,6 +249,9 @@ class Bedside_Nurse(Persona):
                     reserve_bed=reserve_bed,
                     assigned_patient_ids_this_step=getattr(maze, "assigned_patient_ids_this_step", set()),
                     bed_tracked_zones=set(getattr(maze, "available_beds", {}).keys()),
+                    data_collection=data_collection,
+                    runtime_step=int(getattr(self, "runtime_step", 0) or 0),
+                    nurse_name=self.name,
                 )
                 if selected_entry:
                     print(selected_entry)
@@ -231,6 +259,23 @@ class Bedside_Nurse(Persona):
                 # Check if a Patient has been found
                 if(selected_patient):
                     data_collection["Patients_Attended"].append([selected_patient.name, selected_entry[0] if selected_entry else None])
+                    data_collection.setdefault("Assignment_Events", []).append({
+                        "step": int(getattr(self, "runtime_step", 0) or 0),
+                        "nurse": self.name,
+                        "patient": selected_patient.name,
+                        "queue": "bedside_nurse_waiting",
+                    })
+                    data_collection.setdefault("Queue_Pop_Events", []).append({
+                        "step": int(getattr(self, "runtime_step", 0) or 0),
+                        "nurse": self.name,
+                        "patient": selected_patient.name,
+                        "queue": "bedside_nurse_waiting",
+                        "assignment_path": "normal_queue",
+                        "zone": selected_patient.scratch.next_room,
+                        "target_zone": getattr(selected_patient.scratch, "next_room", None),
+                        "injuries_zone": getattr(selected_patient.scratch, "injuries_zone", None),
+                        "reserved_bed": list(reserved_bed) if reserved_bed else None,
+                    })
 
                     # Add patient to one of the patients in the zones
                     zone = selected_patient.scratch.next_room

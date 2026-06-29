@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import random
 import uuid
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,8 @@ class TransferBroker:
         minutes_per_step: int = 1,
         request_log_path: str | Path | None = None,
         retry_after_seconds: int | None = None,
+        icu_acceptance_probability: float | None = None,
+        random_seed: int | None = None,
     ):
         self.profile_name = str(profile_name or "default")
         self.minutes_per_step = max(1, int(minutes_per_step or 1))
@@ -61,8 +64,11 @@ class TransferBroker:
         self.accepted_transfer_count = 0
         self.pending_transfer_count = 0
         self.transfer_request_count = 0
+        self.icu_probability_gate_pending_count = 0
         self._transfer_sequence = 0
         self._attempts_by_transfer_id: dict[str, int] = {}
+        self.icu_acceptance_probability = self._normalize_probability(icu_acceptance_probability)
+        self._rng = random.Random(random_seed)
         self.request_log_path = Path(request_log_path) if request_log_path else None
         if self.request_log_path:
             self.request_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -88,7 +94,19 @@ class TransferBroker:
             minutes_per_step=minutes_per_step,
             request_log_path=request_log_path,
             retry_after_seconds=profile.get("retry_after_seconds"),
+            icu_acceptance_probability=profile.get("icu_acceptance_probability"),
+            random_seed=profile.get("random_seed"),
         )
+
+    @staticmethod
+    def _normalize_probability(value: float | None) -> float:
+        if value in (None, ""):
+            return 1.0
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return 1.0
+        return max(0.0, min(1.0, parsed))
 
     def _next_transfer_id(self) -> str:
         self._transfer_sequence += 1
@@ -145,7 +163,15 @@ class TransferBroker:
         unit = self._unit_for_target(to_unit)
         self.transfer_request_count += 1
 
-        if unit.can_accept():
+        unit_can_accept = unit.can_accept()
+        probability_gate_blocked = (
+            str(to_unit or "").strip().lower() == "icu"
+            and unit_can_accept
+            and self.icu_acceptance_probability < 1.0
+            and self._rng.random() > self.icu_acceptance_probability
+        )
+
+        if unit_can_accept and not probability_gate_blocked:
             assigned_bed = unit.accept(patient_id=str(patient_id))
             completed_minute = int(request.request_minute) + int(self.transfer_turnaround_minutes)
             completed_step = int(request.request_step) + int(
@@ -175,7 +201,11 @@ class TransferBroker:
                 transfer_id=transfer_id,
                 accepted=False,
                 status="pending",
-                reason=f"{str(to_unit).lower()}_bed_unavailable",
+                reason=(
+                    "icu_acceptance_probability_gate"
+                    if probability_gate_blocked
+                    else f"{str(to_unit).lower()}_bed_unavailable"
+                ),
                 assigned_bed=None,
                 available_capacity=unit.available_capacity,
                 expected_eta_minutes=None,
@@ -186,6 +216,8 @@ class TransferBroker:
                 transfer_completed_step=None,
             )
             self.pending_transfer_count += 1
+            if probability_gate_blocked:
+                self.icu_probability_gate_pending_count += 1
 
         self._append_log(
             {
@@ -206,4 +238,6 @@ class TransferBroker:
             "transfer_request_count": int(self.transfer_request_count),
             "accepted_transfer_count": int(self.accepted_transfer_count),
             "pending_transfer_count": int(self.pending_transfer_count),
+            "icu_acceptance_probability": float(self.icu_acceptance_probability),
+            "icu_probability_gate_pending_count": int(self.icu_probability_gate_pending_count),
         }

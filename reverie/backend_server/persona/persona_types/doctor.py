@@ -12,6 +12,7 @@ sys.path.append('../../')
 from persona.persona import *
 from persona.memory_structures.scratch import *
 from persona.memory_structures.scratch_types.doctor_scratch import *
+from ed_priority import ed_patient_priority_key, patient_ctas_level
 
 class Doctor(Persona):
 
@@ -21,6 +22,7 @@ class Doctor(Persona):
     idle_move_min_interval_minutes = 15
     queue_aging_interval_minutes = 15  # How often to decrease queue priorities
     queue_aging_decrement = 2          # Amount to decrease per aging tick
+    dispatch_policy = "legacy"
 
     # Patients in these states are effectively done — don't count toward capacity
     TERMINAL_STATES = frozenset({"WAITING_FOR_EXIT", "LEAVING", "DISCHARGED_WAITING", "ADMITTED_BOARDING"})
@@ -68,7 +70,16 @@ class Doctor(Persona):
         # Keep the "available doctors" list consistent and free of duplicates.
         in_list = self.name in maze.doctors_taking_more_patients
         active_count = self._active_patient_count(personas)
-        if active_count < self.max_patients and maze.patients_waiting_for_doctor != []:
+        has_pending_waitlist = bool(self.scratch.assigned_patients_waitlist)
+        can_claim_from_global_queue = (
+            active_count < self.max_patients
+            and maze.patients_waiting_for_doctor != []
+            and not has_pending_waitlist
+            and self.scratch.next_step is None
+            and self.scratch.time_to_next is None
+            and self.scratch.chatting_with is None
+        )
+        if can_claim_from_global_queue:
             # Only assign patients who are actually in a bed and ready for
             # assessment.  Patients still in WAITING_FOR_NURSE have not been
             # transported by a bedside nurse yet, so assigning them wastes a
@@ -76,6 +87,7 @@ class Doctor(Persona):
             ready_states = {"WAITING_FOR_FIRST_ASSESSMENT", "WAITING_FOR_TEST",
                             "GOING_FOR_TEST", "WAITING_FOR_RESULT",
                             "WAITING_FOR_DOCTOR"}
+            self._sort_patient_queue(maze.patients_waiting_for_doctor, personas, curr_time)
             selected = None
             i = 0
             while i < len(maze.patients_waiting_for_doctor):
@@ -95,6 +107,35 @@ class Doctor(Persona):
             if selected:
                 patient = personas.get(selected[1])
                 if patient:
+                    higher_priority_ready_exists = False
+                    selected_key = ed_patient_priority_key(patient)
+                    for other_name, other_patient in personas.items():
+                        if getattr(other_patient, "role", None) != "Patient":
+                            continue
+                        if other_name == patient.name:
+                            continue
+                        if other_patient.scratch.state not in ready_states:
+                            continue
+                        if ed_patient_priority_key(other_patient) < selected_key:
+                            higher_priority_ready_exists = True
+                            break
+                    data_collection.setdefault("Selection_Events", []).append(
+                        {
+                            "step": int(getattr(self, "runtime_step", 0) or 0),
+                            "selector_role": "Doctor",
+                            "selector": self.name,
+                            "queue": "patients_waiting_for_doctor",
+                            "selected_patient": patient.name,
+                            "selected_patient_ctas": patient_ctas_level(patient),
+                            "candidate_ctas_order": [
+                                patient_ctas_level(personas[str(entry[1])])
+                                for entry in maze.patients_waiting_for_doctor[:5]
+                                if str(entry[1]) in personas
+                            ],
+                            "priority_inversion_flag": bool(higher_priority_ready_exists),
+                            "priority_skip_reason": "higher_priority_ready_exists" if higher_priority_ready_exists else None,
+                        }
+                    )
                     self.assign_patient(maze.doctors_taking_more_patients, patient, personas)
             if not in_list and active_count < self.max_patients:
                 maze.doctors_taking_more_patients.append(self.name)
@@ -117,7 +158,7 @@ class Doctor(Persona):
                     for entry in queue:
                         entry[0] = max(1, entry[0] - self.queue_aging_decrement)
                     # Sort by priority only; Python's sort is stable, so FIFO is preserved for ties.
-                    queue.sort(key=lambda entry: entry[0])
+                    self._sort_patient_queue(queue, personas, curr_time)
 
             # If they were chatting with Patient add them to the bedside nurse queue for transfer to testing
             # self.scratch.chatting is assigned in react_to_chat method
@@ -132,6 +173,7 @@ class Doctor(Persona):
             elif(queue != [] and self.scratch.next_step == None):
                 # Deterministic selection — queue is already sorted by
                 # priority (lowest CTAS first, aged over time for fairness).
+                self._sort_patient_queue(queue, personas, curr_time)
                 patient_assessment = queue.pop(0)
 
                 data_collection["Patients_Attended"].append([patient_assessment[0], patient_assessment[1]])
@@ -144,7 +186,18 @@ class Doctor(Persona):
                 # the patient's state advances immediately.
                 patient = personas.get(target_name)
                 if patient:
-                    patient.do_initial_assessment(self, maze)
+                    assessed = patient.do_initial_assessment(self, maze)
+                    if assessed:
+                        patient.scratch.assigned_doctor = self.name
+                        patient.scratch.doctor_dispatch_policy_at_contact = str(getattr(self.__class__, "dispatch_policy", "legacy") or "legacy")
+                        data_collection.setdefault("Doctor_Assignment_Events", []).append({
+                            "step": int(getattr(patient, "runtime_step", 0) or 0),
+                            "doctor": self.name,
+                            "patient": patient.name,
+                            "doctor_dispatch_policy": patient.scratch.doctor_dispatch_policy_at_contact,
+                            "queue_priority": patient_assessment[0],
+                            "ctas": getattr(patient.scratch, "CTAS", None),
+                        })
                     patient.do_disposition(self, maze)
  
             # Force Patient to go somewhere
@@ -212,6 +265,7 @@ class Doctor(Persona):
         new_dict = {}
 
         new_dict["Patients_Attended"] = []
+        new_dict["Doctor_Assignment_Events"] = []
         return new_dict
     
     # Spawn location in major injuries zone
@@ -250,11 +304,36 @@ class Doctor(Persona):
         if(patient.name not in self.scratch.assigned_patients):
             self.scratch.assigned_patients.append(patient.name)
             patient.scratch.assigned_doctor = self.name
+        else:
+            patient.scratch.assigned_doctor = self.name
+
+        first_contact_minute = getattr(patient.scratch, "first_doctor_contact_minute", None)
+        waitlist = getattr(self.scratch, "assigned_patients_waitlist", None)
+        if waitlist is not None and first_contact_minute is None:
+            already_waiting = any(
+                isinstance(entry, (list, tuple)) and len(entry) >= 2 and str(entry[1]) == patient.name
+                for entry in waitlist
+            )
+            if not already_waiting:
+                waitlist.append([getattr(patient.scratch, "CTAS", 99) * self.priority_factor, patient.name])
+            self._sort_patient_queue(waitlist, personas or {patient.name: patient})
         active = self._active_patient_count(personas) if personas else len(self.scratch.assigned_patients)
         if active >= self.max_patients:
             # Remove all occurrences so the doctor isn't considered available.
             while self.name in queue:
                 queue.remove(self.name)
+
+    def _sort_patient_queue(self, queue, personas, curr_time=None):
+        def key(entry):
+            try:
+                patient = personas.get(entry[1]) if personas else None
+            except Exception:
+                patient = None
+            if patient is None:
+                return (999, 999999.0, 999999.0, str(entry[1]) if isinstance(entry, (list, tuple)) and len(entry) >= 2 else str(entry))
+            return ed_patient_priority_key(patient)
+
+        queue.sort(key=key)
 
     def remove_patient(self, persona, maze, personas=None):
         if persona.name in self.scratch.assigned_patients:
